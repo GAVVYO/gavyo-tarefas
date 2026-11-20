@@ -21,7 +21,10 @@ const button = (label, action, glyph, cls = '', extra = '') =>
   `<button class="btn ${cls}" type="button" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`;
 const iconButton = (label, action, glyph, extra = '') =>
   button('', action, glyph, 'ghost tile', `aria-label="${label}" title="${label}" ${extra}`);
-const brand = '<span class="brand"><img src="/aguia.png" alt=""> GAVYO Tarefas</span>';
+const brand = '<span class="brand"><span class="brand-mark"><img src="/aguia.png" alt=""></span><span>GAVYO <strong>Tarefas</strong></span></span>';
+const initialsOf = (name) => name.trim().split(/\s+/).slice(0, 2)
+  .map((part) => Array.from(part)[0]).join('').toUpperCase();
+const stageIcons = { todo: 'circle-dashed', doing: 'loader-circle', done: 'circle-check' };
 const option = (id, label, current) => `<option value="${escape(id)}"${id === current ? ' selected' : ''}>${escape(label)}</option>`;
 const field = (label, html) => `<label class="field">${label}${html}</label>`;
 const projectOptions = (id) => board.projects.map((project) => option(project.id, project.name, id)).join('');
@@ -68,14 +71,14 @@ async function refresh({ shell = false } = {}) {
 function renderShell() {
   root.className = 'wrap';
   root.innerHTML = `<header class="top">
-    <div class="island">${brand}</div>
-    <nav class="island" aria-label="Área de trabalho">
+    ${brand}
+    <nav class="workspace-nav" aria-label="Área de trabalho">
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
       ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
     </nav>
-    <div class="island top-actions">
-      <span class="user-name">${escape(board.user.name)}</span>
+    <div class="top-actions">
+      <div class="account"><span class="avatar" aria-hidden="true">${escape(initialsOf(board.user.name))}</span><span class="user-name">${escape(board.user.name)}</span></div>
       ${iconButton('Conectar ao Codex ou Claude', 'connect', 'plug')}
       ${board.user.role === 'admin' ? iconButton('Administrar projetos e equipe', 'admin', 'settings') : ''}
       ${iconButton('Sair', 'logout', 'log-out')}
@@ -83,14 +86,15 @@ function renderShell() {
   </header>
   <section class="heading">
     <div><h1>${{ board: 'Quadro de tarefas', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]}</h1>
-    <p class="muted">${{ board: 'Acompanhe o trabalho por projeto.', mine: 'Suas tarefas em todos os projetos.', archive: 'Cartões concluídos e arquivados.' }[view]}</p></div>
+      <p id="scope-summary" class="muted"></p>
+    </div>
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
   </section>
   <div class="filters">
-    ${view === 'board' ? `<select aria-label="Projeto" id="project">${projectOptions(projectId)}</select>` : ''}
-    <label class="search">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"></label>
-    ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
+    ${view === 'board' ? `<label class="project-picker">${icon('layers-2')}<select aria-label="Projeto" id="project">${projectOptions(projectId)}</select></label>` : ''}
+    <label class="search">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"><kbd aria-hidden="true">${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl '}K</kbd></label>
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
+    ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
   </div>
   <div id="content"></div>`;
   renderContents();
@@ -99,9 +103,10 @@ function renderShell() {
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
   const name = assignee?.name || 'Sem responsável';
-  const initials = name.split(/\s+/).slice(0, 2).map((value) => value[0]).join('').toUpperCase();
+  const initials = initialsOf(name);
   const overdue = card.due && card.due < today() && card.status !== 'done';
   const due = card.due?.split('-').reverse().join('/');
+  const urgent = card.priority === 'alta';
   const checks = card.checklist.filter((item) => item.done).length;
   const title = escape(card.title);
   const actions = card.archived
@@ -109,7 +114,7 @@ function cardTemplate(card) {
     : Object.entries(stages).filter(([key]) => key !== card.status)
       .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
-  return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" ${card.archived ? '' : 'draggable="true"'}>
+  return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-priority="${card.priority}" ${card.archived ? '' : 'draggable="true"'}>
     <div class="card-top">
       <button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button>
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
@@ -117,13 +122,16 @@ function cardTemplate(card) {
     ${card.description ? `<p>${escape(card.description.slice(0, 130))}${card.description.length > 130 ? '…' : ''}</p>` : ''}
     <div class="chips">
       ${view !== 'board' ? `<span class="chip">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
-      ${card.blocked ? `<span class="chip warn" title="${escape(card.blocked)}">${icon('circle-alert')} Bloqueada</span>` : ''}
-      ${card.priority !== 'normal' ? `<span class="chip ${card.priority === 'alta' ? 'warn' : ''}">Prioridade ${card.priority}</span>` : ''}
-      ${card.checklist.length ? `<span class="chip">${icon('list-checks')} ${checks}/${card.checklist.length} passos</span>` : ''}
+      ${card.blocked ? `<span class="chip warn" title="${escape(card.blocked)}">${icon('circle-alert')} Bloqueado</span>` : ''}
+      ${card.priority !== 'normal' ? `<span class="chip ${urgent ? 'priority-high' : ''}">${icon(urgent ? 'flag' : 'arrow-down')} Prioridade ${card.priority}</span>` : ''}
     </div>
     <div class="card-meta">
       <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
-      ${due ? `<span class="chip ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasada · ' : ''}${due}</span>` : ''}
+      <span class="card-signals">
+        ${due ? `<span class="signal ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasado · ' : ''}<time datetime="${card.due}" title="${due}">${card.due.startsWith(today().slice(0, 4)) ? due.slice(0, 5) : due}</time></span>` : ''}
+        ${card.checklist.length ? `<span class="signal" aria-label="${checks} de ${card.checklist.length} passos concluídos">${icon('list-checks')} ${checks}/${card.checklist.length}</span>` : ''}
+        ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')} ${card.comments.length}</span>` : ''}
+      </span>
     </div>
   </article>`;
 }
@@ -132,11 +140,22 @@ function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
   const needle = search.trim().toLocaleLowerCase('pt-BR');
-  const cards = (view === 'archive' ? board.archive : board.cards).filter((card) =>
+  const scoped = (view === 'archive' ? board.archive : board.cards).filter((card) =>
     (view !== 'board' || card.projectId === projectId) &&
-    (view !== 'mine' || card.assigneeId === board.user.id) &&
+    (view !== 'mine' || card.assigneeId === board.user.id));
+  const cards = scoped.filter((card) =>
     (view === 'archive' || !blockedOnly || card.blocked) &&
     (!needle || `${card.title} ${card.description}`.toLocaleLowerCase('pt-BR').includes(needle)));
+  const countLabel = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
+  const summary = document.querySelector('#scope-summary');
+  const done = scoped.filter((card) => card.status === 'done').length;
+  const blocked = scoped.filter((card) => card.blocked).length;
+  summary.textContent = view === 'archive'
+    ? countLabel(scoped.length, 'cartão arquivado', 'cartões arquivados')
+    : [countLabel(scoped.length, 'cartão', 'cartões'), countLabel(done, 'concluído', 'concluídos'),
+      countLabel(blocked, 'bloqueado', 'bloqueados')].join(' · ');
+  const filtering = Boolean(needle || (blockedOnly && view !== 'archive'));
+  const emptyText = filtering ? 'Nenhum cartão com estes filtros.' : 'Nenhum cartão nesta etapa.';
   if (!board.projects.length && view === 'board') {
     content.innerHTML = `<p class="empty">${board.user.role === 'admin' ? 'Crie um projeto nas configurações para começar.' : 'A equipe ainda não tem projetos.'}</p>`;
     return;
@@ -148,10 +167,10 @@ function renderContents() {
   content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
     const inStage = cards.filter((card) => card.status === key);
     return `<section class="column" data-status="${key}" aria-label="${label}">
-      <div class="column-head"><span class="dot" aria-hidden="true"></span><h2>${label}</h2>
+      <div class="column-head"><span class="stage-icon">${icon(stageIcons[key])}</span><h2>${label}</h2>
       <span class="count" aria-label="${inStage.length} cartões">${inStage.length}</span>
       ${key === 'todo' && board.projects.length && view === 'board' ? iconButton('Adicionar cartão', 'new', 'plus') : ''}</div>
-      <div class="cards">${inStage.map(cardTemplate).join('') || '<p class="empty">Nenhum cartão aqui.</p>'}</div>
+      <div class="cards">${inStage.map(cardTemplate).join('') || `<p class="empty">${emptyText}</p>`}</div>
     </section>`;
   }).join('')}</div>`;
 }
