@@ -207,3 +207,25 @@ test('fundo do quadro: cada pessoa escolhe o seu e só ela vê a própria imagem
   assert.equal((await fetch(`${origin}/api/backgrounds/${prefs.backgroundFile}`, { headers: { cookie: bola } })).status, 404);
   assert.equal((await (await fetch(origin + '/api/board', { headers: { cookie: bola } })).json()).preferences.background, 'noite');
 });
+
+test('cada cartão ganha um número do projeto (GA-1, GA-2) e cartões antigos são numerados na ordem', async () => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const member = await store.createMember({ name: 'Felipe' });
+  const actor = { ...member, source: 'Web' };
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  const other = await store.createProject({ name: 'Site' });
+  const first = await store.createCard({ projectId: project.id, title: 'Primeiro' }, actor);
+  const second = await store.createCard({ projectId: project.id, title: 'Segundo' }, actor);
+  const elsewhere = await store.createCard({ projectId: other.id, title: 'Outro projeto' }, actor);
+  assert.equal(first.key, 'GA-1');
+  assert.equal(second.key, 'GA-2');
+  assert.equal(elsewhere.key, 'ST-1');
+  // Cartão gravado antes dos números existirem.
+  const legacy = { ...second, id: crypto.randomUUID(), title: 'Antigo', history: [{ ...second.history[0], at: new Date().toISOString() }] };
+  delete legacy.number; delete legacy.key; delete legacy.version;
+  await database.query('INSERT INTO cards (id, project_id, version, document) VALUES (?, ?, ?, ?)', [legacy.id, project.id, 1, JSON.stringify(legacy)]);
+  const numbered = (await store.listCards()).find((card) => card.id === legacy.id);
+  assert.equal(numbered.key, 'GA-3');
+  await database.close();
+});

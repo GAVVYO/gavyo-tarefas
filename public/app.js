@@ -278,6 +278,32 @@ const lastAgent = (card) => {
   const last = card.history.at(-1);
   return last && AGENTS.includes(last.source) ? last.source : '';
 };
+/** "Agora": o assistente mexeu nos últimos 10 minutos. */
+const LIVE_MS = 10 * 60000;
+const agentLive = (card) => {
+  const last = card.history.at(-1);
+  return Boolean(last && AGENTS.includes(last.source) && Date.now() - Date.parse(last.at) < LIVE_MS);
+};
+/** Nome de branch a partir do cartão: ga-12-pagina-publica-da-oficina. */
+const branchName = (card) => `${(card.key || 'gt').toLowerCase()}-${card.title.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48).replace(/-$/, '')}`;
+
+/** Texto pronto para colar no Claude ou no Codex, com tudo que o cartão sabe. */
+function agentBrief(card) {
+  const project = board.projects.find((item) => item.id === card.projectId)?.name;
+  const assignee = board.members.find((member) => member.id === card.assigneeId)?.name || 'sem responsável';
+  const due = dueLabel(card);
+  return [
+    `Tarefa ${card.key || ''} — ${card.title} (projeto ${project})`,
+    `Etapa: ${stages[card.status]} · Responsável: ${assignee}${due ? ` · Prazo: ${due.text}` : ''}${card.priority === 'alta' ? ' · Urgente' : ''}`,
+    card.blocked ? `Travado: ${card.blocked}` : '',
+    card.description ? `\nO que precisa ser feito:\n${card.description}` : '',
+    card.checklist.length ? `\nPassos:\n${card.checklist.map((item) => `- [${item.done ? 'x' : ' '}] ${item.title}`).join('\n')}` : '',
+    card.attachments?.length ? `\nO cartão tem ${card.attachments.length} print(s) no GAVYO Tarefas.` : '',
+    `\nBranch sugerida: ${branchName(card)}`,
+    `Quando terminar, use o MCP gavyo-tarefas para comentar o que fez no cartão ${card.key || ''} e mover para a etapa certa.`
+  ].filter(Boolean).join('\n');
+}
 
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
@@ -293,14 +319,14 @@ function cardTemplate(card) {
       .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
-    data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" ${card.archived ? '' : 'draggable="true"'}>
+    data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" data-live="${agentLive(card)}" ${card.archived ? '' : 'draggable="true"'}>
     ${card.attachments?.length && card.status !== 'done' ? `<button type="button" class="card-cover" data-action="edit" data-card="${card.id}" tabindex="-1" aria-hidden="true">
       <img src="${fileUrl(card, card.attachments.at(-1))}" alt="" loading="lazy" draggable="false">
       ${card.attachments.length > 1 ? `<span class="cover-count">${icon('images')}${card.attachments.length}</span>` : ''}</button>` : ''}
     ${card.blocked && card.status !== 'done' ? `<button type="button" class="card-block" data-action="view-block" data-card="${card.id}">
       ${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
     <div class="card-top">
-      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${urgent ? `<span class="urgent">Urgente</span> ` : ''}${title}</button></h3>
+      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${card.key ? `<span class="card-key">${card.key}</span>` : ''}${urgent ? `<span class="urgent">Urgente</span> ` : ''}${title}</button></h3>
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
     </div>
     ${card.description && card.status !== 'done' ? `<p class="card-desc">${escape(card.description.slice(0, 110))}${card.description.length > 110 ? '…' : ''}</p>` : ''}
@@ -309,7 +335,7 @@ function cardTemplate(card) {
       <span class="card-who" title="${escape(assignee?.name || 'Sem responsável')}">
         ${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
         <span class="sr-only">${escape(assignee?.name || 'Sem responsável')}</span>
-        ${agent ? `<span class="card-agent" title="Última mudança feita pelo ${agent}">${icon('bot')}<span>${agent}</span></span>` : ''}
+        ${agent ? `<span class="card-agent" data-live="${agentLive(card)}" title="${agentLive(card) ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}<span>${agentLive(card) ? `${agent} agora` : agent}</span></span>` : ''}
       </span>
       <span class="card-signals">
         ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
@@ -340,6 +366,7 @@ function muralTemplate(scoped) {
     const agentActs = scoped.flatMap((card) => card.history)
       .filter((event) => event.actor === member.name && AGENTS.includes(event.source) && event.at >= since);
     const agents = [...new Set(agentActs.map((event) => event.source))];
+    const live = agentActs.some((event) => Date.now() - Date.parse(event.at) < LIVE_MS);
     const load = doing ? `${doing} fazendo` : todo ? `${todo} na fila` : 'Livre';
     const art = avatarFor(member.name);
     return `<li><button type="button" class="figure" data-action="person" data-person="${member.id}"
@@ -347,7 +374,7 @@ function muralTemplate(scoped) {
       <span class="figure-stage">
         ${art ? `<img class="figure-art" src="/api/avatar-assets/${art}.png" alt="" loading="lazy" draggable="false">`
           : `<span class="figure-initials" aria-hidden="true">${escape(initialsOf(member.name))}</span>`}
-        ${agents.length ? `<span class="figure-agent" title="${agents.join(' e ')} trabalhou pela pessoa hoje">${icon('bot')}<span class="sr-only">${agents.join(' e ')} trabalhou hoje</span></span>` : ''}
+        ${agents.length ? `<span class="figure-agent" data-live="${live}" title="${live ? `${agents.join(' e ')} está trabalhando pela pessoa agora` : `${agents.join(' e ')} trabalhou pela pessoa hoje`}">${icon('bot')}<span class="sr-only">${agents.join(' e ')} trabalhou hoje</span></span>` : ''}
       </span>
       <span class="figure-name">${escape(member.id === board.user.id ? `${member.name} (você)` : member.name)}</span>
       <span class="figure-load">${load}${stuck ? ` · <b>${stuck} travado${stuck > 1 ? 's' : ''}</b>` : ''}</span>
@@ -373,7 +400,7 @@ function renderContents() {
   const cards = scoped.filter((card) =>
     (!person || card.assigneeId === person) &&
     (view === 'archive' || !blockedOnly || card.blocked) &&
-    (!needle || `${card.title} ${card.description}`.toLocaleLowerCase('pt-BR').includes(needle)));
+    (!needle || `${card.key || ''} ${card.title} ${card.description}`.toLocaleLowerCase('pt-BR').includes(needle)));
   const countLabel = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
   const summary = document.querySelector('#scope-summary');
   const done = scoped.filter((card) => card.status === 'done').length;
@@ -546,7 +573,13 @@ function showCard(card, origin) {
   const assignee = board.members.find((item) => item.id === card.assigneeId);
   const done = card.checklist.filter((item) => item.done).length;
   const due = dueLabel(card);
-  const details = `<p class="task-project">${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}</p>`;
+  const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
+    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>
+    <div class="task-copy">
+      ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
+      ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
+      ${button('Entregar para o assistente', 'copy-brief', 'bot', 'ghost', `data-card="${card.id}"`)}
+    </div>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
     <div class="inspector-edit-actions" hidden>
@@ -958,6 +991,10 @@ document.addEventListener('click', async (event) => {
       await placeCard(card, status);
       if (fromTask) showCard(cardById(card));
       else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'copy-text' || action === 'copy-brief') {
+      const text = action === 'copy-brief' ? agentBrief(cardById(card)) : control.dataset.text;
+      await navigator.clipboard.writeText(text).catch(() => { throw new Error('Não deu para copiar. Tente de novo.'); });
+      message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
     } else if (action === 'set-bg') {
       board.preferences = await request('/preferences', 'PUT', { background: control.dataset.bg });
       applyBackground(board.preferences);
@@ -1028,6 +1065,7 @@ document.addEventListener('submit', async (event) => {
     if (kind === 'login') {
       await request('/login', 'POST', { memberId: form.dataset.member, pin: data.pin });
       await refresh({ shell: true });
+      autoRefresh();
     } else if (kind === 'change-pin') {
       if (data.newPin !== data.confirmPin) throw new Error('Os PINs novos precisam ser iguais.');
       await request('/pin', 'POST', { currentPin: data.currentPin, newPin: data.newPin });
@@ -1152,10 +1190,31 @@ document.addEventListener('drop', (event) => {
   if (source) void placeCard(dragged, column.dataset.status, source).catch((error) => message(error.message));
 });
 
+/** O quadro se atualiza sozinho (o que o assistente ou outra pessoa mudou aparece sem clicar). */
+let autoTimer;
+function autoRefresh() {
+  clearInterval(autoTimer);
+  autoTimer = setInterval(async () => {
+    if (!board || document.hidden || dialog.open || dragged || document.querySelector('.viewer, .menu[open]') ||
+      document.activeElement?.matches?.('input, textarea, select')) return;
+    try {
+      const fresh = await request('/board');
+      const sign = (data) => JSON.stringify([data.cards.map((card) => [card.id, card.version]), data.archive.length, data.members.length]);
+      const changed = sign(fresh) !== sign(board);
+      board = fresh;
+      if (changed) renderContents();
+      else root.querySelectorAll('[data-live=true]').length && renderContents();
+    } catch (error) {
+      if (error.status === 401) { clearInterval(autoTimer); login(); }
+    }
+  }, 20000);
+}
+
 async function start() {
   try {
     if (!(await request('/session')).signedIn) return login();
     await refresh({ shell: true });
+    autoRefresh();
   }
   catch (error) {
     if (error.status === 401) login();

@@ -133,12 +133,41 @@ export function createStore({ query }) {
     if (id && !(await member(id))) throw new AppError(400, 'Responsável inválido.');
   }
 
+  /**
+   * Número do cartão por projeto (GA-12): as iniciais do projeto e a ordem de criação.
+   * Cartões antigos sem número recebem o seu na primeira leitura, pela ordem em que nasceram.
+   */
+  const projectKey = (name) => (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[A-Za-z0-9]+/g) || ['GT'])
+    .map((word) => word[0]).join('').slice(0, 3).toUpperCase().padEnd(2, 'T');
+  async function numberCards() {
+    const rows = await query('SELECT id, project_id, version, document FROM cards');
+    const cards = rows.map((row) => ({ row, card: JSON.parse(row.document) }));
+    const missing = cards.filter(({ card }) => !card.number);
+    if (!missing.length) return;
+    const projectsById = new Map((await projects()).map((item) => [item.id, item]));
+    const next = new Map();
+    for (const { card } of cards) if (card.number) next.set(card.projectId, Math.max(next.get(card.projectId) || 0, card.number));
+    missing.sort((a, b) => a.card.history[0].at.localeCompare(b.card.history[0].at));
+    for (const { row, card } of missing) {
+      const number = (next.get(card.projectId) || 0) + 1;
+      next.set(card.projectId, number);
+      card.number = number;
+      card.key = `${projectKey(projectsById.get(card.projectId)?.name || 'GT')}-${number}`;
+      await query('UPDATE cards SET document = ? WHERE id = ? AND version = ?', [JSON.stringify(card), row.id, row.version]);
+    }
+  }
+
   async function createCard(input, actor) {
     const fields = newCard.parse(input);
-    if (!(await project(fields.projectId))) throw new AppError(404, 'Projeto não encontrado.');
+    const owner = await project(fields.projectId);
+    if (!owner) throw new AppError(404, 'Projeto não encontrado.');
     await validateAssignee(fields.assigneeId);
+    await numberCards();
+    const numbers = (await query('SELECT document FROM cards WHERE project_id = ?', [fields.projectId]))
+      .map((row) => JSON.parse(row.document).number || 0);
+    const number = Math.max(0, ...numbers) + 1;
     const card = {
-      ...fields, id: randomUUID(), status: 'todo', blocked: '', archived: false, checklist: [], attachments: [],
+      ...fields, id: randomUUID(), number, key: `${projectKey(owner.name)}-${number}`, status: 'todo', blocked: '', archived: false, checklist: [], attachments: [],
       comments: [], history: [event(actor, 'Criou o cartão')]
     };
     await query('INSERT INTO cards (id, project_id, version, document) VALUES (?, ?, ?, ?)',
@@ -149,6 +178,7 @@ export function createStore({ query }) {
   const decode = (row) => ({ ...JSON.parse(row.document), version: row.version });
 
   async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
+    await numberCards();
     const rows = projectId
       ? await query('SELECT version, document FROM cards WHERE project_id = ?', [projectId])
       : await query('SELECT version, document FROM cards');
