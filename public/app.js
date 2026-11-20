@@ -335,9 +335,9 @@ function cardTemplate(card) {
       <span class="card-who" title="${escape(assignee?.name || 'Sem responsável')}">
         ${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
         <span class="sr-only">${escape(assignee?.name || 'Sem responsável')}</span>
-        ${agent ? `<span class="card-agent" data-live="${agentLive(card)}" title="${agentLive(card) ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}<span>${agentLive(card) ? `${agent} agora` : agent}</span></span>` : ''}
       </span>
       <span class="card-signals">
+        ${agent ? `<span class="card-agent" data-live="${agentLive(card)}" title="${agentLive(card) ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}<span>${agentLive(card) ? `${agent} agora` : agent}</span></span>` : ''}
         ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
         ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')}${card.comments.length}</span>` : ''}
         ${card.attachments?.length && card.status === 'done' ? `<span class="signal" aria-label="${card.attachments.length} prints">${icon('image')}${card.attachments.length}</span>` : ''}
@@ -625,8 +625,8 @@ function showCard(card, origin) {
         <ul class="prints">${(card.attachments || []).map((item, index) => `<li><button type="button" class="print" data-action="view-print"
           data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${card.attachments.length}, de ${escape(item.by)}">
           <img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}
-          ${card.archived ? '' : `<li class="print-add-cell"><label class="print-add" data-drop="${card.id}">
-            ${icon('image-plus')}<span><b>Colar print</b> com Ctrl+V,<br>arrastar ou escolher</span>
+          ${card.archived ? '' : `<li class="print-add-cell"><label class="print-add" data-drop="${card.id}" title="Pôr imagem (ou Ctrl+V, ou arraste)">
+            ${icon('plus')}<span class="sr-only">Pôr imagem: escolha, cole com Ctrl+V ou arraste</span>
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}">
           </label></li>`}</ul>
       </section>
@@ -640,10 +640,17 @@ function showCard(card, origin) {
       </section>`}
     </section>
     <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
-      <div id="task-comments">${cardActivity(card)}</div>
-      <form class="inspector-compose" data-form="comment" data-card="${card.id}" data-version="${card.version}">
-        ${field('Escrever comentário', '<textarea name="comment" maxlength="2000" required></textarea>')}
-        <div class="error" role="alert"></div><div><button class="btn">${icon('send')} Comentar</button></div>
+      <div class="thread" id="task-comments">${cardActivity(card)}</div>
+      <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
+        <textarea name="comment" maxlength="2000" rows="2" required aria-label="Mensagem para a equipe"
+          placeholder="Escreva para a equipe e para os assistentes…"></textarea>
+        <div class="composer-bar">
+          ${card.archived ? '' : `<label class="composer-plus" title="Pôr uma imagem">${icon('plus')}<span class="sr-only">Pôr uma imagem</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`}
+          <span class="composer-hint">Enter envia · Shift+Enter pula linha · Ctrl+V cola print</span>
+          <button class="composer-send" aria-label="Enviar">${icon('send-horizontal')}</button>
+        </div>
+        <div class="error" role="alert"></div>
       </form>
     </section>
     <section class="inspector-section" id="task-history" data-task-section="history" hidden>
@@ -665,6 +672,10 @@ function setTaskSection(section, step = 'title') {
   for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== section;
   for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) {
     control.setAttribute('aria-pressed', String(control.dataset.section === section));
+  }
+  if (section === 'conversation') {
+    const thread = dialog.querySelector('#task-comments');
+    if (thread) thread.scrollTop = thread.scrollHeight;
   }
   const editing = section === 'edit';
   dialog.querySelector('.inspector-edit-actions').hidden = !editing;
@@ -693,12 +704,27 @@ function setEditorStep(step, focus = true) {
     dialog.querySelector(`.editor-steps [data-step="${step}"]`))?.focus({ preventScroll: true });
 }
 
+/** Conversa como chat: mensagens e prints na ordem, juntando o que a mesma pessoa mandou em seguida. */
 function cardActivity(card) {
-  return card.comments.map((item) => `<div class="comment">
-    ${face(memberNamed(item.actor), 'card-face')}
-    <div class="comment-body"><p class="comment-by"><strong>${escape(item.actor)}</strong>${agentMark(item.source)}<small>${when(item.at)}</small></p>
-      <p class="comment-text">${linkify(item.text)}</p></div></div>`).join('') ||
-    '<p class="muted inspector-quiet">Ninguém comentou ainda. Escreva abaixo para a equipe (e os assistentes) verem.</p>';
+  const items = [
+    ...card.comments.map((item) => ({ kind: 'text', actor: item.actor, source: item.source, at: item.at, text: item.text })),
+    ...(card.attachments || []).map((item, index) => ({ kind: 'image', actor: item.by, source: 'Web', at: item.at, item, index }))
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  if (!items.length) return '<p class="thread-empty">Nada por aqui ainda. Escreva abaixo ou cole um print.</p>';
+  let previous;
+  return items.map((entry) => {
+    const grouped = previous && previous.actor === entry.actor && previous.source === entry.source &&
+      Date.parse(entry.at) - Date.parse(previous.at) < 5 * 60000;
+    previous = entry;
+    const body = entry.kind === 'text'
+      ? `<p class="message-text">${linkify(entry.text)}</p>`
+      : `<button type="button" class="message-image" data-action="view-print" data-card="${card.id}" data-index="${entry.index}" aria-label="Abrir print de ${escape(entry.actor)}">
+          <img src="${fileUrl(card, entry.item)}" alt="" loading="lazy"></button>`;
+    return `<div class="message" data-grouped="${Boolean(grouped)}">
+      ${grouped ? '<span class="message-gutter" aria-hidden="true"></span>' : face(memberNamed(entry.actor), 'card-face')}
+      <div class="message-body">${grouped ? '' : `<p class="message-by"><strong>${escape(entry.actor)}</strong>${agentMark(entry.source)}<small>${when(entry.at)}</small></p>`}${body}</div>
+    </div>`;
+  }).join('');
 }
 
 /** Linha do tempo: quem fez, por qual canal, o quê e quando. */
@@ -823,10 +849,17 @@ async function uploadPrints(cardId, files) {
       const response = await fetch(`/api/cards/${cardId}/attachments`, { method: 'POST', headers: { 'content-type': body.type || file.type }, body });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Não deu para enviar o print.');
     }
+    const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
     await refresh();
     if (dialog.open) {
       showCard(cardById(cardId));
-      dialog.querySelector('.prints li:nth-last-child(2) .print')?.setAttribute('data-fresh', '');
+      if (section && section !== 'summary') setTaskSection(section);
+      const thread = dialog.querySelector('#task-comments');
+      if (thread && section === 'conversation') {
+        thread.lastElementChild?.setAttribute('data-fresh', '');
+        thread.scrollTop = thread.scrollHeight;
+      }
+      dialog.querySelector('.prints .print:last-of-type')?.setAttribute('data-fresh', '');
     }
     message(images.length === 1 ? 'Print colado no cartão.' : `${images.length} prints colados no cartão.`);
   } catch (error) {
@@ -864,6 +897,15 @@ function viewPrint(cardId, index) {
   document.body.append(viewer);
   viewer.querySelector('[data-action=close-viewer]').focus();
 }
+
+// No chat: Enter envia, Shift+Enter pula linha.
+document.addEventListener('keydown', (event) => {
+  const box = event.target.closest?.('.composer textarea');
+  if (box && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    if (box.value.trim()) box.form.requestSubmit();
+  }
+});
 
 document.addEventListener('keydown', (event) => {
   const viewer = document.querySelector('.viewer');
@@ -1091,7 +1133,10 @@ document.addEventListener('submit', async (event) => {
       const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version: Number(form.dataset.version) });
       await refresh();
       if (kind === 'comment' && form.isConnected) {
-        dialog.querySelector('#task-comments').innerHTML = cardActivity(card);
+        const thread = dialog.querySelector('#task-comments');
+        thread.innerHTML = cardActivity(card);
+        thread.lastElementChild?.setAttribute('data-fresh', '');
+        thread.scrollTop = thread.scrollHeight;
         dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
         dialog.querySelector('#task-edit').dataset.version = card.version;
         form.dataset.version = card.version;
