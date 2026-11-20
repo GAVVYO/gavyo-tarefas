@@ -1,0 +1,467 @@
+const root = document.querySelector('#root');
+const dialog = document.querySelector('#dialog');
+const notice = document.querySelector('#notice');
+const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
+const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
+let board;
+let view = 'board';
+let projectId = '';
+let search = '';
+let blockedOnly = false;
+let moved = '';
+let dragged;
+let noticeTimer;
+let restoreFocus;
+
+const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[char]);
+const icon = (name) => `<img class="icon" src="/assets/icons/${name}.svg" alt="">`;
+const button = (label, action, glyph, cls = '', extra = '') =>
+  `<button class="btn ${cls}" type="button" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`;
+const iconButton = (label, action, glyph, extra = '') =>
+  button('', action, glyph, 'ghost tile', `aria-label="${label}" title="${label}" ${extra}`);
+const brand = '<span class="brand"><img src="/aguia.png" alt=""> GAVYO Tarefas</span>';
+const option = (id, label, current) => `<option value="${escape(id)}"${id === current ? ' selected' : ''}>${escape(label)}</option>`;
+const field = (label, html) => `<label class="field">${label}${html}</label>`;
+const projectOptions = (id) => board.projects.map((project) => option(project.id, project.name, id)).join('');
+const memberOptions = (id) => option('', 'Sem responsável', id || '') +
+  board.members.map((member) => option(member.id, member.name, id)).join('');
+const priorityOptions = (value) => Object.entries(priorities).map(([id, label]) => option(id, label, value)).join('');
+const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' }).format(new Date());
+const cardById = (id) => [...board.cards, ...board.archive].find((card) => card.id === id);
+
+async function request(path, method = 'GET', data) {
+  const response = await fetch('/api' + path, {
+    method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
+  });
+  const body = await response.json();
+  if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
+  return body;
+}
+
+function message(text) {
+  notice.textContent = text;
+  notice.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { notice.hidden = true; }, 3600);
+}
+
+function login() {
+  root.className = 'login';
+  root.innerHTML = `<section class="login-panel">${brand}<h1>Entre no quadro</h1>
+    <form data-form="login">
+      ${field('E-mail', '<input name="email" type="email" autocomplete="username" required>')}
+      ${field('Senha', '<input name="password" type="password" autocomplete="current-password" required>')}
+      <div class="error" role="alert"></div><button class="btn primary">Entrar</button>
+    </form></section>`;
+}
+
+async function refresh({ shell = false } = {}) {
+  board = await request('/board');
+  projectId = board.projects.some((project) => project.id === projectId) ? projectId : board.projects[0]?.id || '';
+  if (shell) renderShell();
+  else renderContents();
+}
+
+function renderShell() {
+  root.className = 'wrap';
+  root.innerHTML = `<header class="top">
+    <div class="island">${brand}</div>
+    <nav class="island" aria-label="Área de trabalho">
+      ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
+      ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
+      ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
+    </nav>
+    <div class="island top-actions">
+      <span class="user-name">${escape(board.user.name)}</span>
+      ${iconButton('Conectar ao Codex ou Claude', 'connect', 'plug')}
+      ${board.user.role === 'admin' ? iconButton('Administrar projetos e equipe', 'admin', 'settings') : ''}
+      ${iconButton('Sair', 'logout', 'log-out')}
+    </div>
+  </header>
+  <section class="heading">
+    <div><h1>${{ board: 'Quadro de tarefas', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]}</h1>
+    <p class="muted">${{ board: 'Acompanhe o trabalho por projeto.', mine: 'Suas tarefas em todos os projetos.', archive: 'Cartões concluídos e arquivados.' }[view]}</p></div>
+    ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
+  </section>
+  <div class="filters">
+    ${view === 'board' ? `<select aria-label="Projeto" id="project">${projectOptions(projectId)}</select>` : ''}
+    <label class="search">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"></label>
+    ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
+    ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
+  </div>
+  <div id="content"></div>`;
+  renderContents();
+}
+
+function cardTemplate(card) {
+  const assignee = board.members.find((member) => member.id === card.assigneeId);
+  const name = assignee?.name || 'Sem responsável';
+  const initials = name.split(/\s+/).slice(0, 2).map((value) => value[0]).join('').toUpperCase();
+  const overdue = card.due && card.due < today() && card.status !== 'done';
+  const due = card.due?.split('-').reverse().join('/');
+  const checks = card.checklist.filter((item) => item.done).length;
+  const title = escape(card.title);
+  const actions = card.archived
+    ? button('Restaurar', 'restore', 'archive-restore', 'ghost', `data-card="${card.id}"`)
+    : Object.entries(stages).filter(([key]) => key !== card.status)
+      .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
+      (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
+  return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" ${card.archived ? '' : 'draggable="true"'}>
+    <div class="card-top">
+      <button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button>
+      <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
+    </div>
+    ${card.description ? `<p>${escape(card.description.slice(0, 130))}${card.description.length > 130 ? '…' : ''}</p>` : ''}
+    <div class="chips">
+      ${view !== 'board' ? `<span class="chip">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
+      ${card.blocked ? `<span class="chip warn" title="${escape(card.blocked)}">${icon('circle-alert')} Bloqueada</span>` : ''}
+      ${card.priority !== 'normal' ? `<span class="chip ${card.priority === 'alta' ? 'warn' : ''}">Prioridade ${card.priority}</span>` : ''}
+      ${card.checklist.length ? `<span class="chip">${icon('list-checks')} ${checks}/${card.checklist.length} passos</span>` : ''}
+    </div>
+    <div class="card-meta">
+      <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
+      ${due ? `<span class="chip ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasada · ' : ''}${due}</span>` : ''}
+    </div>
+  </article>`;
+}
+
+function renderContents() {
+  const content = document.querySelector('#content');
+  if (!content) return;
+  const needle = search.trim().toLocaleLowerCase('pt-BR');
+  const cards = (view === 'archive' ? board.archive : board.cards).filter((card) =>
+    (view !== 'board' || card.projectId === projectId) &&
+    (view !== 'mine' || card.assigneeId === board.user.id) &&
+    (view === 'archive' || !blockedOnly || card.blocked) &&
+    (!needle || `${card.title} ${card.description}`.toLocaleLowerCase('pt-BR').includes(needle)));
+  if (!board.projects.length && view === 'board') {
+    content.innerHTML = `<p class="empty">${board.user.role === 'admin' ? 'Crie um projeto nas configurações para começar.' : 'A equipe ainda não tem projetos.'}</p>`;
+    return;
+  }
+  if (view === 'archive') {
+    content.innerHTML = `<div class="cards full-list">${cards.map(cardTemplate).join('') || '<p class="empty">Nenhum cartão arquivado.</p>'}</div>`;
+    return;
+  }
+  content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
+    const inStage = cards.filter((card) => card.status === key);
+    return `<section class="column" data-status="${key}" aria-label="${label}">
+      <div class="column-head"><span class="dot" aria-hidden="true"></span><h2>${label}</h2>
+      <span class="count" aria-label="${inStage.length} cartões">${inStage.length}</span>
+      ${key === 'todo' && board.projects.length && view === 'board' ? iconButton('Adicionar cartão', 'new', 'plus') : ''}</div>
+      <div class="cards">${inStage.map(cardTemplate).join('') || '<p class="empty">Nenhum cartão aqui.</p>'}</div>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function openDialog(title, html, focusSelector) {
+  if (!dialog.open) restoreFocus = document.activeElement;
+  dialog.innerHTML = `<header class="dialog-head"><h2 id="dialog-title">${title}</h2>${iconButton('Fechar', 'close', 'x')}</header>
+    <div class="dialog-body">${html}</div>`;
+  if (!dialog.open) dialog.showModal();
+  if (focusSelector) dialog.querySelector(focusSelector)?.focus();
+}
+
+function showNew() {
+  openDialog('Novo cartão', `<form data-form="new">
+    ${field('Título', '<input name="title" maxlength="160" required>')}
+    ${field('Projeto', `<select name="projectId" required>${projectOptions(projectId)}</select>`)}
+    <div class="error" role="alert"></div><div class="row"><button class="btn primary">Criar cartão</button></div>
+  </form>`, '[name=title]');
+}
+
+function checklistItem(item) {
+  return `<div class="check-row">
+    <input type="checkbox" aria-label="Marcar passo como concluído" ${item.done ? 'checked' : ''}>
+    <input type="text" value="${escape(item.title)}" maxlength="240" placeholder="Descreva o passo" aria-label="Descrição do passo">
+    ${iconButton('Remover passo', 'remove-check', 'trash-2')}
+  </div>`;
+}
+
+function linkify(text) {
+  return String(text).split(/(https?:\/\/[^\s<>"']+)/gi).map((part, i) =>
+    i % 2 ? `<a href="${escape(part)}" target="_blank" rel="noopener noreferrer">${escape(part)}</a>` : escape(part)).join('');
+}
+
+function showCard(card) {
+  if (!card) return;
+  openDialog(escape(card.title), `<form data-form="edit" data-card="${card.id}" data-version="${card.version}">
+    ${field('Título', `<input name="title" value="${escape(card.title)}" required maxlength="160">`)}
+    ${field('Descrição', `<textarea name="description" maxlength="8000">${escape(card.description)}</textarea>`)}
+    ${/https?:\/\//i.test(card.description) ? `<div class="muted">${linkify(card.description)}</div>` : ''}
+    <div class="row fields">
+      ${field('Responsável', `<select name="assigneeId">${memberOptions(card.assigneeId)}</select>`)}
+      ${field('Prazo', `<input type="date" name="due" value="${card.due ?? ''}">`)}
+      ${field('Prioridade', `<select name="priority">${priorityOptions(card.priority)}</select>`)}
+      ${field('Etapa', `<select name="status" ${card.archived ? 'disabled' : ''}>${Object.entries(stages).map(([id, label]) => option(id, label, card.status)).join('')}</select>`)}
+    </div>
+    ${field('Motivo do bloqueio', `<input name="blocked" value="${escape(card.blocked)}" maxlength="500" placeholder="Deixe vazio se estiver livre">`)}
+    <section class="detail-section">
+      <h3>Checklist</h3><div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
+      <div>${button('Adicionar passo', 'add-check', 'plus')}</div>
+    </section>
+    <div class="error" role="alert"></div><div class="row"><button class="btn primary">Salvar alterações</button></div>
+  </form>
+  <section class="detail-section">
+    <h3>Comentários</h3>
+    ${card.comments.map((item) => `<div class="comment"><strong>${escape(item.actor)}</strong>
+      <small> · ${dateFormat.format(new Date(item.at))}</small><p>${linkify(item.text)}</p></div>`).join('') || '<p class="muted">Nenhum comentário.</p>'}
+    <form data-form="comment" data-card="${card.id}" data-version="${card.version}">
+      ${field('Escrever comentário', '<textarea name="comment" maxlength="2000" required></textarea>')}
+      <div class="error" role="alert"></div><div><button class="btn">Comentar</button></div>
+    </form>
+  </section>
+  <section class="detail-section">
+    <h3>Histórico</h3><ol class="history">${card.history.slice().reverse().map((entry) =>
+      `<li><strong>${escape(entry.actor)}${entry.source === 'Web' ? '' : ' via ' + escape(entry.source)}</strong>
+      · ${escape(entry.action)} · ${dateFormat.format(new Date(entry.at))}</li>`).join('')}</ol>
+  </section>`);
+}
+
+function showAdmin() {
+  openDialog('Projetos e equipe', `
+    <form data-form="project">
+      <h3>Projetos</h3>
+      <p class="muted">${board.projects.map((item) => escape(item.name)).join(' · ') || 'Nenhum projeto ainda.'}</p>
+      ${field('Nome do projeto', '<input name="name" maxlength="100" required>')}
+      <div class="error" role="alert"></div><div><button class="btn">Adicionar projeto</button></div>
+    </form>
+    <form class="detail-section" data-form="member">
+      <h3>Equipe</h3>
+      <p class="muted">${board.members.map((item) => escape(item.name)).join(' · ')}</p>
+      ${field('Nome', '<input name="name" maxlength="100" required>')}
+      ${field('E-mail', '<input name="email" type="email" autocomplete="off" maxlength="254" required>')}
+      ${field('Senha inicial', '<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="200" required>')}
+      <div class="error" role="alert"></div><div><button class="btn">Adicionar colega</button></div>
+    </form>`);
+}
+
+async function showConnect() {
+  const tokens = await request('/tokens');
+  openDialog('Conectar IA ao quadro', `<p class="muted">Gere um token pessoal para cada ferramenta. O acesso vence em 30 dias.</p>
+    <form class="detail-section" data-form="token">
+      ${field('Ferramenta', '<select name="source"><option>Codex</option><option>Claude</option></select>')}
+      <div class="error" role="alert"></div><div><button class="btn primary">Gerar token</button></div>
+    </form>
+    <section class="detail-section"><h3>Tokens ativos</h3>
+      ${tokens.map((item) => `<div class="row"><span>${escape(item.source)} · vence em ${dateFormat.format(new Date(Number(item.expires)))}</span>
+      ${button('Revogar', 'revoke-token', 'x', 'ghost', `data-token="${item.id}"`)}</div>`).join('') || '<p class="muted">Nenhum token ativo.</p>'}
+    </section>`);
+}
+
+function showToken(token, source) {
+  const url = new URL('/mcp', location.origin).href;
+  const instructions = source === 'Codex'
+    ? 'Configure o servidor no Codex com o URL acima e a variável de ambiente GAVYO_MCP_TOKEN como bearer_token_env_var.'
+    : 'No Claude Code, adicione um servidor HTTP com o URL acima e um cabeçalho Authorization com Bearer seguido do token.';
+  openDialog('Token de conexão', `<div class="cards">
+    ${field('URL do MCP', `<input readonly value="${escape(url)}">`)}
+    ${field('Token pessoal', `<input readonly value="${escape(token)}">`)}
+    <p>${instructions}</p><small>Copie o token agora. Ele é exibido uma vez.</small>
+  </div>`);
+}
+
+async function placeCard(id, status, byDrag = false) {
+  const card = cardById(id);
+  if (!card || status === card.status) return;
+  await request(`/cards/${id}`, 'PATCH', { status, version: card.version });
+  const data = await request('/board');
+  const paint = () => {
+    board = data;
+    moved = byDrag ? '' : id;
+    renderContents();
+    moved = '';
+  };
+  if (!byDrag && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const old = document.querySelector(`[data-id="${id}"]`);
+    if (old) old.style.viewTransitionName = 'moving-card';
+    const transition = document.startViewTransition(() => {
+      paint();
+      const updated = document.querySelector(`[data-id="${id}"]`);
+      if (updated) updated.style.viewTransitionName = 'moving-card';
+    });
+    void transition.finished.catch(() => {}).finally(() => {
+      const current = document.querySelector(`[data-id="${id}"]`);
+      if (current) current.style.removeProperty('view-transition-name');
+    });
+    await transition.updateCallbackDone;
+  } else paint();
+  message(`Cartão movido para ${stages[status]}.`);
+}
+
+async function updateArchive(id, archived) {
+  const card = cardById(id);
+  await request(`/cards/${id}`, 'PATCH', { archived, version: card.version });
+  await refresh();
+  message(archived ? 'Cartão arquivado.' : 'Cartão restaurado.');
+}
+
+document.addEventListener('click', async (event) => {
+  const control = event.target.closest('button[data-action]');
+  if (!control) {
+    for (const menu of document.querySelectorAll('.menu[open]')) if (!menu.contains(event.target)) menu.open = false;
+    return;
+  }
+  const { action, card, status } = control.dataset;
+  try {
+    if (['board', 'mine', 'archive'].includes(action)) {
+      view = action; search = ''; blockedOnly = false; renderShell();
+      root.querySelector('[aria-current=page]')?.focus();
+    } else if (action === 'filter') {
+      blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
+    } else if (action === 'refresh') { await refresh(); message('Quadro atualizado.'); }
+    else if (action === 'new') showNew();
+    else if (action === 'edit') showCard(cardById(card));
+    else if (action === 'close') dialog.close();
+    else if (action === 'admin') showAdmin();
+    else if (action === 'connect') await showConnect();
+    else if (action === 'revoke-token') {
+      await request('/tokens/' + control.dataset.token, 'DELETE', {});
+      await showConnect();
+      message('Token revogado.');
+    }
+    else if (action === 'move') {
+      control.closest('details').open = false;
+      await placeCard(card, status);
+      root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'archive-card' || action === 'restore') {
+      await updateArchive(card, action === 'archive-card');
+      root.querySelector('[aria-current=page]')?.focus();
+    } else if (action === 'add-check') {
+      const checklist = dialog.querySelector('#checklist');
+      if (checklist.children.length >= 60) return message('O cartão aceita até 60 passos.');
+      checklist.insertAdjacentHTML('beforeend', checklistItem({ title: '', done: false }));
+      checklist.lastElementChild.querySelector('input[type=text]').focus();
+    } else if (action === 'remove-check') {
+      control.closest('.check-row').remove();
+      dialog.querySelector('[data-action=add-check]').focus();
+    } else if (action === 'logout') {
+      await request('/logout', 'POST', {});
+      board = null; view = 'board'; projectId = ''; search = ''; blockedOnly = false;
+      login();
+    }
+  } catch (error) {
+    message(error.message);
+    if (error.status === 401) { dialog.close(); login(); }
+    if (error.status === 409) await refresh().catch(() => {});
+  }
+});
+
+document.addEventListener('submit', async (event) => {
+  const form = event.target;
+  const kind = form.dataset.form;
+  if (!kind) return;
+  event.preventDefault();
+  const errorNode = form.querySelector('.error');
+  const submit = form.querySelector('button:not([type=button])');
+  errorNode.textContent = '';
+  submit.disabled = true;
+  const data = Object.fromEntries(new FormData(form));
+  try {
+    if (kind === 'login') {
+      await request('/login', 'POST', data);
+      await refresh({ shell: true });
+    } else if (kind === 'new') {
+      const card = await request('/cards', 'POST', data);
+      view = 'board'; projectId = card.projectId; search = ''; blockedOnly = false;
+      dialog.close(); await refresh({ shell: true }); message('Cartão criado.');
+      root.querySelector(`.card-title[data-card="${card.id}"]`)?.focus();
+    } else if (kind === 'edit' || kind === 'comment') {
+      if (kind === 'edit') {
+        data.assigneeId ||= null;
+        data.due ||= null;
+        data.checklist = Array.from(form.querySelectorAll('.check-row'), (row) => ({
+          title: row.querySelector('input[type=text]').value.trim(), done: row.querySelector('input[type=checkbox]').checked
+        })).filter((item) => item.title);
+      }
+      const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version: Number(form.dataset.version) });
+      await refresh();
+      showCard(card);
+      dialog.querySelector(kind === 'comment' ? '[name=comment]' : '[name=title]')?.focus();
+      message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
+    } else if (kind === 'token') {
+      const { token } = await request('/tokens', 'POST', data);
+      showToken(token, data.source);
+    } else {
+      await request(kind === 'project' ? '/projects' : '/members', 'POST', data);
+      await refresh({ shell: true });
+      showAdmin();
+      message(kind === 'project' ? 'Projeto criado.' : 'Colega adicionado.');
+    }
+  } catch (error) {
+    errorNode.textContent = error.message;
+    if (error.status === 409 && (kind === 'edit' || kind === 'comment')) {
+      errorNode.textContent += ' Feche e reabra o cartão antes de salvar.';
+      await refresh().catch(() => {});
+    }
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+dialog.addEventListener('close', () => {
+  if (!dialog.open) dialog.replaceChildren();
+  const target = restoreFocus?.isConnected ? restoreFocus : root.querySelector('[aria-current=page]');
+  target?.focus({ preventScroll: true });
+});
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'search') { search = event.target.value; renderContents(); }
+});
+document.addEventListener('change', (event) => {
+  if (event.target.id === 'project') { projectId = event.target.value; renderContents(); }
+});
+document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !dialog.open) {
+    const input = document.querySelector('#search');
+    if (input) { event.preventDefault(); input.focus(); }
+  }
+  if (event.key === 'Escape' && document.activeElement.closest('.menu[open]')) {
+    const menu = document.activeElement.closest('.menu[open]');
+    menu.open = false; menu.querySelector('summary').focus();
+  }
+});
+document.addEventListener('dragstart', (event) => {
+  const card = event.target.closest('.card[draggable]');
+  if (card && event.target === card) {
+    dragged = card.dataset.id;
+    event.dataTransfer.setData('text/plain', dragged);
+    event.dataTransfer.effectAllowed = 'move';
+  }
+});
+document.addEventListener('dragover', (event) => {
+  const column = event.target.closest('.column');
+  if (!column || !dragged) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  for (const item of document.querySelectorAll('.column.drop')) if (item !== column) item.classList.remove('drop');
+  column.classList.add('drop');
+});
+document.addEventListener('dragleave', (event) => {
+  const column = event.target.closest('.column');
+  if (column && !column.contains(event.relatedTarget)) column.classList.remove('drop');
+});
+document.addEventListener('dragend', () => {
+  dragged = null;
+  document.querySelectorAll('.drop').forEach((item) => item.classList.remove('drop'));
+});
+document.addEventListener('drop', (event) => {
+  const column = event.target.closest('.column');
+  if (!column || !dragged) return;
+  event.preventDefault();
+  column.classList.remove('drop');
+  void placeCard(dragged, column.dataset.status, true).catch((error) => message(error.message));
+});
+
+async function start() {
+  try { await refresh({ shell: true }); }
+  catch (error) {
+    if (error.status === 401) login();
+    else {
+      root.innerHTML = '<div class="loading"><p>Não foi possível carregar o quadro.</p><button type="button" class="btn">Tentar novamente</button></div>';
+      root.querySelector('button').onclick = start;
+    }
+  } finally { root.removeAttribute('aria-busy'); }
+}
+void start();
