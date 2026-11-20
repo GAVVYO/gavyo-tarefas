@@ -219,52 +219,75 @@ function navigate(nextView) {
   root.querySelector('[aria-current=page]')?.focus({ preventScroll: true });
 }
 
+/** Próximo passo do cartão: um só, discreto, que aparece por inteiro ao passar o mouse. */
 function nextCardAction(card) {
   const target = `data-card="${card.id}"`;
   if (card.archived) return button('Restaurar', 'restore', 'archive-restore', 'card-action', target);
-  if (card.status === 'done') return button('Arquivar', 'archive-card', 'archive', 'card-action', target);
-  if (card.blocked) return button('Ver bloqueio', 'view-block', 'circle-alert', 'card-action attention', target);
+  if (card.status === 'done') return button('Arquivar', 'archive-card', 'archive', 'card-action quiet', target);
+  if (card.blocked) return '';
   const start = card.status === 'todo';
   return button(start ? 'Começar' : 'Concluir', 'move', start ? 'play' : 'check',
-    'card-action primary', `${target} data-status="${start ? 'doing' : 'done'}"`);
+    `card-action ${start ? 'quiet' : 'primary'}`, `${target} data-status="${start ? 'doing' : 'done'}"`);
 }
+
+const DAY = 86400000;
+const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', timeZone: 'UTC' });
+/** Prazo em palavras: "Atrasado 2 dias", "Hoje", "Amanhã", "Sex, 24/11". */
+function dueLabel(card) {
+  if (!card.due) return null;
+  const days = Math.round((Date.parse(card.due) - Date.parse(today())) / DAY);
+  const short = card.due.split('-').reverse().slice(0, 2).join('/');
+  if (card.status === 'done') return { text: short, tone: '' };
+  if (days < 0) return { text: days === -1 ? 'Atrasado 1 dia' : `Atrasado ${-days} dias`, tone: 'late' };
+  if (days === 0) return { text: 'Hoje', tone: 'soon' };
+  if (days === 1) return { text: 'Amanhã', tone: 'soon' };
+  if (days < 7) return { text: `${weekday.format(new Date(card.due)).replace('.', '')}, ${short}`, tone: '' };
+  return { text: short, tone: '' };
+}
+
+/** Último assistente (Codex/Claude) que mexeu no cartão, se a última mudança foi dele. */
+const lastAgent = (card) => {
+  const last = card.history.at(-1);
+  return last && AGENTS.includes(last.source) ? last.source : '';
+};
 
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
-  const name = assignee?.name || 'Sem responsável';
-  const overdue = card.due && card.due < today() && card.status !== 'done';
-  const due = card.due?.split('-').reverse().join('/');
-  const urgent = card.priority === 'alta';
+  const due = dueLabel(card);
+  const urgent = card.priority === 'alta' && card.status !== 'done';
+  const steps = card.checklist.length;
   const checks = card.checklist.filter((item) => item.done).length;
   const title = escape(card.title);
+  const agent = lastAgent(card);
   const actions = card.archived
     ? button('Restaurar', 'restore', 'archive-restore', 'ghost', `data-card="${card.id}"`)
     : Object.entries(stages).filter(([key]) => key !== card.status)
       .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
-  return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-priority="${card.priority}" ${card.archived ? '' : 'draggable="true"'}>
+  return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
+    data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" ${card.archived ? '' : 'draggable="true"'}>
+    ${card.blocked && card.status !== 'done' ? `<button type="button" class="card-block" data-action="view-block" data-card="${card.id}">
+      ${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
     <div class="card-top">
-      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button></h3>
+      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${urgent ? `<span class="urgent">Urgente</span> ` : ''}${title}</button></h3>
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
     </div>
-    ${card.description ? `<p>${escape(card.description.slice(0, 130))}${card.description.length > 130 ? '…' : ''}</p>` : ''}
-    <div class="chips">
-      ${view !== 'board' ? `<span class="chip">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
-      ${card.blocked ? `<span class="chip warn">${icon('circle-alert')} Bloqueado</span>` : ''}
-      ${card.priority !== 'normal' ? `<span class="chip ${urgent ? 'priority-high' : ''}">${icon(urgent ? 'flag' : 'arrow-down')} Prioridade ${card.priority}</span>` : ''}
-    </div>
-    ${card.blocked ? `<p class="card-block-reason">${escape(card.blocked)}</p>` : ''}
+    ${card.description && card.status !== 'done' ? `<p class="card-desc">${escape(card.description.slice(0, 110))}${card.description.length > 110 ? '…' : ''}</p>` : ''}
+    ${view !== 'board' ? `<p class="card-project">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</p>` : ''}
     <div class="card-bottom">
-      <div class="card-meta">
-        <span class="row">${assignee ? face(assignee) : icon('user-round')}${escape(name)}</span>
-        <span class="card-signals">
-          ${due ? `<span class="signal ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasado · ' : ''}<time datetime="${card.due}" title="${due}">${card.due.startsWith(today().slice(0, 4)) ? due.slice(0, 5) : due}</time></span>` : ''}
-          ${card.checklist.length ? `<span class="signal" aria-label="${checks} de ${card.checklist.length} passos concluídos">${icon('list-checks')} ${checks}/${card.checklist.length}</span>` : ''}
-          ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')} ${card.comments.length}</span>` : ''}
-        </span>
-      </div>
+      <span class="card-who" title="${escape(assignee?.name || 'Sem responsável')}">
+        ${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
+        <span class="sr-only">${escape(assignee?.name || 'Sem responsável')}</span>
+        ${agent ? `<span class="card-agent" title="Última mudança feita pelo ${agent}">${icon('bot')}<span>${agent}</span></span>` : ''}
+      </span>
+      <span class="card-signals">
+        ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
+        ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')}${card.comments.length}</span>` : ''}
+      </span>
       <div class="card-footer">${nextCardAction(card)}</div>
     </div>
+    ${steps ? `<div class="trail" data-progress="${checks / steps}" data-full="${checks === steps}" role="img" aria-label="${checks} de ${steps} passos feitos">
+      <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${checks}/${steps}</span></div>` : ''}
   </article>`;
 }
 
@@ -335,6 +358,7 @@ function renderContents() {
   }
   if (view === 'archive') {
     content.innerHTML = `<div class="cards full-list">${cards.map(cardTemplate).join('') || '<p class="empty">Nenhum cartão arquivado.</p>'}</div>`;
+    paintTrails(content);
     return;
   }
   const slot = document.querySelector('#mural-slot');
@@ -348,6 +372,12 @@ function renderContents() {
       <div class="cards">${inStage.map(cardTemplate).join('') || `<p class="empty">${emptyText}</p>`}</div>
     </section>`;
   }).join('')}</div>`;
+  paintTrails(content);
+}
+
+/** A águia voa pela trilha do checklist até onde a equipe chegou (CSP: valor posto pelo CSSOM). */
+function paintTrails(scope) {
+  for (const trail of scope.querySelectorAll('.trail')) trail.style.setProperty('--p', trail.dataset.progress);
 }
 
 function openDialog(title, html, focusSelector, { details = '', footer = '', origin } = {}) {
@@ -643,7 +673,13 @@ async function placeCard(id, status, dragSource) {
     paint();
     if (dragSource) playCardFlight(root.querySelector(`[data-id="${id}"]`), dragSource);
   }
-  message(`Cartão movido para ${stages[status]}.`);
+  if (status === 'done') {
+    const figure = root.querySelector(`.figure[data-person="${card.assigneeId}"]`);
+    figure?.classList.add('cheer');
+    setTimeout(() => figure?.classList.remove('cheer'), 800);
+    const who = board.members.find((member) => member.id === card.assigneeId);
+    message(who ? `Boa, ${who.name.split(' ')[0]}! Cartão concluído.` : 'Cartão concluído.');
+  } else message(`Cartão movido para ${stages[status]}.`);
 }
 
 async function updateArchive(id, archived) {
