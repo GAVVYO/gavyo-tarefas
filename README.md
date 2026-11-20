@@ -11,14 +11,14 @@ npm ci
 cp .env.example .env
 ```
 
-Preencha nome, e-mail e senha do admin em `.env`. A senha precisa ter pelo menos 12 caracteres. Em `INITIAL_PROJECTS`, coloque o nome de cada projeto separado por vírgula ou crie o segundo projeto no painel depois.
+Preencha o nome do administrador em `.env`. O PIN inicial é `1234` e pode ser definido já no setup com `ADMIN_PIN`. Em `INITIAL_PROJECTS`, coloque o nome de cada projeto separado por vírgula ou crie o segundo projeto no painel depois.
 
 ```sh
 npm run setup
 npm start
 ```
 
-Abra [localhost:3000](http://127.0.0.1:3000). O banco local fica em `.data/`. Retire `ADMIN_PASSWORD` do arquivo após o setup. O administrador pode criar projetos e contas da equipe pelo menu **Projetos e equipe**. Os membros do quadro compartilham visibilidade e edição dos projetos. Criar projetos e contas exige perfil de administrador.
+Abra [localhost:3000](http://127.0.0.1:3000). O banco local fica em `.data/`. Remova `ADMIN_PIN` do arquivo após o setup, caso tenha definido um. O administrador pode criar projetos e perfis da equipe pelo menu **Projetos e equipe**. Na entrada, cada pessoa escolhe seu perfil e digita o PIN. Na sidebar, **Alterar PIN** troca o PIN do perfil conectado. Os membros do quadro compartilham visibilidade e edição dos projetos. Criar projetos e contas exige perfil de administrador.
 
 ## Conectar Codex e Claude Code
 
@@ -52,7 +52,7 @@ Para testes locais, troque o URL por `http://127.0.0.1:3000/mcp`. Use o botão *
 
 O deploy previsto usa um site Node.js 22 e um banco MySQL dedicados. Configure `NODE_ENV=production`, `PUBLIC_ORIGIN=https://tarefas.gavyo.me` e `DATABASE_URL` nas variáveis da hospedagem. O servidor usa a porta recebida em `PORT`. A URL do MySQL deve ter usuário e senha codificados para URL quando contiverem caracteres especiais.
 
-Rode `npm run setup` com a conexão de produção e as variáveis do primeiro administrador, retire `ADMIN_PASSWORD` do ambiente e inicie com `npm start`. Confira HTTPS, login e MCP no domínio antes de compartilhar o quadro.
+Rode `npm run setup` com a conexão de produção e as variáveis do primeiro administrador, retire `ADMIN_PIN` do ambiente, se usado e inicie com `npm start`. Confira HTTPS, login e MCP no domínio antes de compartilhar o quadro.
 
 ## Verificação
 

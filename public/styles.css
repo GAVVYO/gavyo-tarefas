@@ -359,3 +359,11 @@ html[data-card-transition]::view-transition-new(root){animation:none}
   to{clip-path:inset(0);opacity:1}
 }
 @media(pointer:coarse){.profile-dock{--profile-tab:44px}}
+
+.login-profiles{display:grid;gap:6px}
+.login-choice.btn{justify-content:flex-start;min-height:44px;padding:6px 9px;gap:9px}
+.login-choice .icon{margin-left:auto}
+.login-person{display:flex;align-items:center;gap:9px}
+.login-person .avatar{width:32px;height:32px}
+.pin-input{min-height:44px;font-size:1.12rem;letter-spacing:.35em;font-variant-numeric:tabular-nums}
+.profile-info .profile-pin{margin-top:9px}

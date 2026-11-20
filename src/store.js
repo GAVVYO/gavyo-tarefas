@@ -23,9 +23,10 @@ export const patchCard = z.object(cardFields).partial().extend({
   checklist: z.array(z.object({ title: text(240), done: z.boolean() })).max(60).optional(),
   comment: text(2000).optional()
 });
-export const memberInput = z.object({
-  name: text(100), email: z.email().max(254).transform((value) => value.toLowerCase()),
-  password: z.string().min(12).max(200), role: z.enum(['admin', 'member']).default('member')
+export const DEFAULT_PIN = '1234';
+export const pinInput = z.string().regex(/^[0-9]{4}$/);
+const memberInput = z.object({
+  name: text(100), pin: pinInput.default(DEFAULT_PIN), role: z.enum(['admin', 'member']).default('member')
 });
 export const projectInput = z.object({ name: text(100) });
 export const sources = z.enum(['Codex', 'Claude']);
@@ -38,28 +39,52 @@ export class AppError extends Error {
 
 export function createStore({ query }) {
   const first = async (sql, args) => (await query(sql, args))[0];
-  const member = (id) => first('SELECT id, name, email, role FROM members WHERE id = ?', [id]);
+  const member = (id) => first('SELECT id, name, role FROM members WHERE id = ?', [id]);
   const projects = () => query('SELECT id, name FROM projects ORDER BY name');
   const members = () => query('SELECT id, name, role FROM members ORDER BY name');
   const project = (id) => first('SELECT id, name FROM projects WHERE id = ?', [id]);
 
-  async function createMember(input) {
-    const { email, name, role, password } = memberInput.parse(input);
+  async function encodePin(pin) {
     const salt = randomBytes(16).toString('hex');
-    const key = await derive(password, salt, 64);
-    const id = randomUUID();
-    await query('INSERT INTO members (id, email, name, password, role) VALUES (?, ?, ?, ?, ?)',
-      [id, email, name, `${salt}:${key.toString('hex')}`, role]);
-    return { id, email, name, role };
+    const key = await derive(pin, salt, 64);
+    return `pin:${salt}:${key.toString('hex')}`;
   }
 
-  async function login(email, password) {
-    const account = await first('SELECT id, password FROM members WHERE email = ?', [email.toLowerCase()]);
-    const [salt, encoded] = account?.password.split(':') ?? ['0'.repeat(32), '0'.repeat(128)];
-    if (!timingSafeEqual(await derive(password, salt, 64), Buffer.from(encoded, 'hex')) || !account) {
-      throw new AppError(401, 'E-mail ou senha incorretos.');
+  async function createMember(input) {
+    const { name, role, pin } = memberInput.parse(input);
+    const id = randomUUID();
+    // Keep the legacy unique email column compatible with existing databases.
+    await query('INSERT INTO members (id, email, name, password, role) VALUES (?, ?, ?, ?, ?)',
+      [id, `${id}@perfil.invalid`, name, await encodePin(pin), role]);
+    return { id, name, role };
+  }
+
+  async function verifyPin(id, pin) {
+    const account = await first('SELECT id, password FROM members WHERE id = ?', [id]);
+    const saved = account?.password;
+    if (saved?.startsWith('pin:')) {
+      const [, salt, encoded] = saved.split(':');
+      if (timingSafeEqual(await derive(pin, salt, 64), Buffer.from(encoded, 'hex'))) return account;
+    } else {
+      // Accounts from the old login flow start with the same default as new profiles.
+      await derive(pin, 'legacy-pin-comparison', 64);
+      if (account && pin === DEFAULT_PIN) return account;
     }
+    throw new AppError(401, 'PIN incorreto.');
+  }
+
+  async function login(id, pin) {
+    const account = await verifyPin(id, pin);
     return issue(account.id, 'Web', 7);
+  }
+
+  async function changePin(id, currentPin, newPin, sessionToken) {
+    const { password } = await verifyPin(id, currentPin);
+    const updated = await query('UPDATE members SET password = ? WHERE id = ? AND password = ?',
+      [await encodePin(newPin), id, password]);
+    if (!updated.affectedRows) throw new AppError(409, 'O PIN mudou. Tente novamente.');
+    await query("DELETE FROM credentials WHERE member_id = ? AND source = 'Web' AND digest <> ?",
+      [id, digest(sessionToken)]);
   }
 
   async function issue(id, source, days) {
@@ -165,5 +190,5 @@ export function createStore({ query }) {
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
   }
 
-  return { createMember, login, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard };
+  return { createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard };
 }

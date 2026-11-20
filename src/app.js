@@ -1,15 +1,36 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { AppError, sources } from './store.js';
+import { AppError, pinInput, sources } from './store.js';
 import { serveMcp } from './mcp.js';
 
 const file = (path) => fileURLToPath(new URL(path, import.meta.url));
 const credential = (req) => /(?:^|;\s*)gavyo_session=([\w-]{43})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
-const failures = new Map();
 
 export function createApp(store, { production = false, origin = '' } = {}) {
   const app = express();
+  const attempts = new Map();
+
+  async function rateLimited(req, memberId, validate) {
+    const forwarded = production ? req.get('x-forwarded-for')?.split(',').at(-1)?.trim() : null;
+    const now = Date.now();
+    for (const [key, value] of attempts) if (value.until <= now) attempts.delete(key);
+    const keys = [`address:${forwarded || req.ip}`, `profile:${memberId}`];
+    const limits = [24, 8];
+    const entries = keys.map((key) => attempts.get(key) ?? { count: 0, until: now + 300000 });
+    if (attempts.size > 4096 || entries.some((entry, index) => entry.count >= limits[index])) {
+      throw new AppError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    }
+    keys.forEach((key, index) => {
+      entries[index].count++;
+      attempts.set(key, entries[index]);
+    });
+    const result = await validate();
+    // Successful use of one profile cannot reset the network-wide counter.
+    attempts.delete(keys[1]);
+    return result;
+  }
+
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
     res.set({
@@ -34,20 +55,13 @@ export function createApp(store, { production = false, origin = '' } = {}) {
     next();
   });
 
+  app.get('/api/profiles', async (_req, res) => {
+    res.json((await store.members()).map(({ id, name }) => ({ id, name })));
+  });
+
   app.post('/api/login', async (req, res) => {
-    const { email, password } = z.object({ email: z.email().max(254), password: z.string().min(1).max(200) }).parse(req.body);
-    const forwarded = production ? req.get('x-forwarded-for')?.split(',').at(-1)?.trim() : null;
-    const key = forwarded || req.ip;
-    const now = Date.now();
-    for (const [address, entry] of failures) if (entry.until <= now) failures.delete(address);
-    const entry = failures.get(key) ?? { count: 0, until: now + 600000 };
-    if (entry.count >= 15 || (!failures.has(key) && failures.size >= 4096)) {
-      throw new AppError(429, 'Muitas tentativas. Aguarde alguns minutos.');
-    }
-    entry.count++;
-    failures.set(key, entry);
-    const { token, expires } = await store.login(email, password);
-    failures.delete(key);
+    const { memberId, pin } = z.object({ memberId: z.uuid(), pin: pinInput }).parse(req.body);
+    const { token, expires } = await rateLimited(req, memberId, () => store.login(memberId, pin));
     res.cookie('gavyo_session', token, {
       httpOnly: true, secure: production, sameSite: 'strict', expires: new Date(expires), path: '/'
     }).json({ ok: true });
@@ -57,6 +71,13 @@ export function createApp(store, { production = false, origin = '' } = {}) {
     req.actor = await store.identity(credential(req), 'Web');
     if (!req.actor) throw new AppError(401, 'Entre para acessar o quadro.');
     next();
+  });
+
+  app.post('/api/pin', async (req, res) => {
+    const { currentPin, newPin } = z.object({ currentPin: pinInput, newPin: pinInput }).parse(req.body);
+    if (currentPin === newPin) throw new AppError(400, 'Escolha um PIN diferente do atual.');
+    await rateLimited(req, req.actor.id, () => store.changePin(req.actor.id, currentPin, newPin, credential(req)));
+    res.json({ ok: true });
   });
 
   app.post('/api/logout', async (req, res) => {

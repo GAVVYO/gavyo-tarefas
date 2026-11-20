@@ -7,6 +7,7 @@ const notice = document.querySelector('#notice');
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
+let loginProfiles = [];
 let view = 'board';
 let projectId = '';
 let search = '';
@@ -57,14 +58,53 @@ function message(text) {
   noticeTimer = setTimeout(() => { destination.hidden = true; }, 3600);
 }
 
-function login() {
+const pinField = (name, autocomplete) => `<input class="pin-input" name="${name}"
+  type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4"
+  autocomplete="${autocomplete}" required>`;
+
+function renderLogin(body) {
   root.className = 'login';
-  root.innerHTML = `<section class="login-panel">${brand}<h1>Entre no quadro</h1>
-    <form data-form="login">
-      ${field('E-mail', '<input name="email" type="email" autocomplete="username" required>')}
-      ${field('Senha', '<input name="password" type="password" autocomplete="current-password" required>')}
+  root.innerHTML = `<section class="login-panel">${brand}${body}</section>`;
+}
+
+function pickProfile() {
+  renderLogin(`<h1 tabindex="-1">Quem está entrando?</h1>${
+    loginProfiles.length ? `<div class="login-profiles">${loginProfiles.map((profile) => `
+      <button class="login-choice btn" type="button" data-action="choose-profile" data-profile="${profile.id}">
+        <span class="avatar" aria-hidden="true">${escape(initialsOf(profile.name))}</span>
+        <span>${escape(profile.name)}</span>${icon('chevron-right')}
+      </button>`).join('')}</div>` : '<p class="muted">Ainda não há perfis cadastrados.</p>'}`);
+}
+
+async function login() {
+  renderLogin('<p class="muted">Carregando perfis…</p>');
+  try {
+    loginProfiles = await request('/profiles');
+    pickProfile();
+  } catch {
+    renderLogin(`<p role="alert">Não foi possível carregar os perfis.</p>
+      ${button('Tentar novamente', 'retry-login', 'refresh-cw')}`);
+  }
+}
+
+function showPinEntry(profile) {
+  renderLogin(`<div class="login-person"><span class="avatar" aria-hidden="true">${escape(initialsOf(profile.name))}</span>
+    <h1>${escape(profile.name)}</h1></div>
+    <form data-form="login" data-member="${profile.id}">
+      ${field('PIN de 4 dígitos', pinField('pin', 'current-password'))}
       <div class="error" role="alert"></div><button class="btn primary">Entrar</button>
-    </form></section>`;
+      ${button('Trocar de perfil', 'pick-profile', 'arrow-left', 'ghost')}
+    </form>`);
+  root.querySelector('[name=pin]').focus();
+}
+
+function showChangePin() {
+  openDialog('Alterar PIN', `<form data-form="change-pin">
+    ${field('PIN atual', pinField('currentPin', 'current-password'))}
+    ${field('Novo PIN', pinField('newPin', 'new-password'))}
+    ${field('Confirme o novo PIN', pinField('confirmPin', 'off'))}
+    <div class="error" role="alert"></div><div><button class="btn primary">Salvar PIN</button></div>
+  </form>`, '[name=currentPin]');
 }
 
 async function refresh({ shell = false } = {}) {
@@ -117,6 +157,7 @@ function renderShell() {
       <div class="profile-info">
         <h2 id="profile-name">${escape(board.user.name)}</h2>
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
+        ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
       </div>
     </aside>
   </div>`;
@@ -357,8 +398,7 @@ function showAdmin() {
       <h3>Equipe</h3>
       <p class="muted">${board.members.map((item) => escape(item.name)).join(' · ')}</p>
       ${field('Nome', '<input name="name" maxlength="100" required>')}
-      ${field('E-mail', '<input name="email" type="email" autocomplete="off" maxlength="254" required>')}
-      ${field('Senha inicial', '<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="200" required>')}
+      <p class="muted">O novo perfil começa com o PIN 1234.</p>
       <div class="error" role="alert"></div><div><button class="btn">Adicionar colega</button></div>
     </form>`);
 }
@@ -439,7 +479,17 @@ document.addEventListener('click', async (event) => {
   }
   const { action, card, status } = control.dataset;
   try {
-    if (['board', 'mine', 'archive'].includes(action)) {
+    if (action === 'choose-profile') {
+      const profile = loginProfiles.find((item) => item.id === control.dataset.profile);
+      if (profile) showPinEntry(profile);
+    } else if (action === 'pick-profile') {
+      pickProfile();
+      root.querySelector('h1')?.focus();
+    } else if (action === 'retry-login') {
+      await login();
+    } else if (action === 'change-pin') {
+      showChangePin();
+    } else if (['board', 'mine', 'archive'].includes(action)) {
       navigate(action);
     } else if (action === 'filter') {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
@@ -500,8 +550,13 @@ document.addEventListener('submit', async (event) => {
   const data = Object.fromEntries(new FormData(form));
   try {
     if (kind === 'login') {
-      await request('/login', 'POST', data);
+      await request('/login', 'POST', { memberId: form.dataset.member, pin: data.pin });
       await refresh({ shell: true });
+    } else if (kind === 'change-pin') {
+      if (data.newPin !== data.confirmPin) throw new Error('Os PINs novos precisam ser iguais.');
+      await request('/pin', 'POST', { currentPin: data.currentPin, newPin: data.newPin });
+      dialog.close();
+      message('PIN alterado.');
     } else if (kind === 'new') {
       const card = await request('/cards', 'POST', data);
       view = 'board'; projectId = card.projectId; search = ''; blockedOnly = false;
@@ -542,6 +597,11 @@ document.addEventListener('submit', async (event) => {
     }
   } catch (error) {
     errorNode.textContent = error.message;
+    if (kind === 'login' && error.status === 401) {
+      const pin = form.querySelector('[name=pin]');
+      pin.value = '';
+      pin.focus();
+    }
     if (error.status === 409 && (kind === 'edit' || kind === 'comment')) {
       errorNode.textContent += ' Feche e reabra o cartão antes de salvar.';
       await refresh().catch(() => {});
@@ -557,6 +617,11 @@ dialog.addEventListener('close', () => {
   target?.focus({ preventScroll: true });
 });
 document.addEventListener('input', (event) => {
+  if (event.target.classList.contains('pin-input')) {
+    event.target.value = event.target.value.replace(/[^0-9]/g, '');
+    const error = event.target.form?.querySelector('.error');
+    if (error) error.textContent = '';
+  }
   if (event.target.id === 'search') { search = event.target.value; renderContents(); }
 });
 document.addEventListener('change', (event) => {

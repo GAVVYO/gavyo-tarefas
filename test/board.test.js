@@ -17,8 +17,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   });
   await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const password = 'senha-ficticia-do-teste';
-  const member = await store.createMember({ name: 'João', email: 'joao@example.com', password });
+  const member = await store.createMember({ name: 'João' });
   const project = await store.createProject({ name: 'GAVYO Auto' });
   const other = await store.createProject({ name: 'Outro projeto' });
 
@@ -32,9 +31,23 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
 
   assert.equal((await request('/api/board')).status, 401);
   assert.equal((await request('/mcp')).status, 401);
-  const login = await request('/api/login', { method: 'POST', body: { email: member.email, password } });
+  const profiles = await request('/api/profiles');
+  assert.deepEqual(profiles.body, [{ id: member.id, name: member.name }]);
+  const loginAs = (pin) => request('/api/login', { method: 'POST', body: { memberId: member.id, pin } });
+  assert.equal((await loginAs('0123')).status, 401);
+  const login = await loginAs('1234');
+  const otherSession = await loginAs('1234');
   assert.equal(login.status, 200);
   const headers = { cookie: login.headers.get('set-cookie').split(';')[0] };
+  const otherHeaders = { cookie: otherSession.headers.get('set-cookie').split(';')[0] };
+  const changePin = (currentPin, newPin) => request('/api/pin',
+    { method: 'POST', body: { currentPin, newPin }, headers });
+  assert.equal((await changePin('0123', '0479')).status, 401);
+  assert.equal((await changePin('1234', '1234')).status, 400);
+  assert.equal((await changePin('1234', '0479')).status, 200);
+  assert.equal((await request('/api/board', { headers: otherHeaders })).status, 401);
+  assert.equal((await loginAs('1234')).status, 401);
+  assert.equal((await loginAs('0479')).status, 200);
   assert.equal((await request('/api/projects', { method: 'POST', body: { name: 'Restrito' }, headers })).status, 403);
   assert.equal((await request('/api/tokens', { method: 'POST', body: { source: 'Codex' },
     headers: { ...headers, origin: 'https://example.com' } })).status, 403);
@@ -88,4 +101,26 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   assert.equal((await request('/api/logout', { method: 'POST', body: {}, headers })).status, 200);
   assert.equal((await request('/api/board', { headers })).status, 401);
   await client.close();
+});
+
+
+test('perfis antigos passam a usar PIN padrão e tentativas são limitadas por perfil', async (t) => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const id = 'c916b557-02b8-4be3-8323-0ddcac0417ed';
+  await database.query('INSERT INTO members (id, email, name, password, role) VALUES (?, ?, ?, ?, ?)',
+    [id, 'legado@example.test', 'Legado', 'hashed-password', 'member']);
+  const login = (pin) => fetch(`http://127.0.0.1:${server.address().port}/api/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ memberId: id, pin })
+  });
+  assert.equal((await login('1234')).status, 200);
+  for (let i = 0; i < 8; i++) assert.equal((await login('4321')).status, 401);
+  assert.equal((await login('1234')).status, 429);
 });
