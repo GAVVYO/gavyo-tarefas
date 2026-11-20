@@ -124,3 +124,108 @@ test('perfis antigos passam a usar PIN padrão e tentativas são limitadas por p
   for (let i = 0; i < 8; i++) assert.equal((await login('4321')).status, 401);
   assert.equal((await login('1234')).status, 429);
 });
+
+test('prints do cartão: só imagem de verdade, só para quem entrou, e somem do disco ao tirar', async (t) => {
+  const { mkdtemp, readdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const uploads = await mkdtemp(join(tmpdir(), 'gavyo-prints-'));
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { uploads }).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const member = await store.createMember({ name: 'Bola' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  const login = await fetch(origin + '/api/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' })
+  });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const card = await store.createCard({ projectId: project.id, title: 'Tela com erro' }, { ...member, source: 'Web' });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const send = (body, type = 'image/png', headers = { cookie }) =>
+    fetch(`${origin}/api/cards/${card.id}/attachments`, { method: 'POST', headers: { 'content-type': type, ...headers }, body });
+
+  assert.equal((await send(png, 'image/png', {})).status, 401);
+  assert.equal((await send(Buffer.from('<script>alert(1)</script>'))).status, 400);
+  const added = await send(png);
+  assert.equal(added.status, 201);
+  const saved = await added.json();
+  assert.equal(saved.attachments.length, 1);
+  assert.equal(saved.history.at(-1).action, 'Print');
+  const [attachment] = saved.attachments;
+
+  const file = await fetch(`${origin}/api/files/${card.id}/${attachment.file}`, { headers: { cookie } });
+  assert.equal(file.status, 200);
+  assert.equal(file.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), png);
+  assert.equal((await fetch(`${origin}/api/files/${card.id}/${attachment.file}`)).status, 401);
+
+  const removed = await fetch(`${origin}/api/cards/${card.id}/attachments/${attachment.id}`, {
+    method: 'DELETE', headers: { cookie, 'content-type': 'application/json' }, body: '{}'
+  });
+  assert.equal(removed.status, 200);
+  assert.equal((await removed.json()).attachments.length, 0);
+  assert.deepEqual(await readdir(join(uploads, card.id)), []);
+});
+
+test('fundo do quadro: cada pessoa escolhe o seu e só ela vê a própria imagem', async (t) => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { uploads: await mkdtemp(join(tmpdir(), 'gavyo-fundos-')) }).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const enter = async (name) => {
+    const member = await store.createMember({ name });
+    const r = await fetch(origin + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' }) });
+    return r.headers.get('set-cookie').split(';')[0];
+  };
+  const felipe = await enter('Felipe');
+  const bola = await enter('Bola');
+  const put = (cookie, background) => fetch(origin + '/api/preferences', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ background }) });
+  assert.equal((await (await fetch(origin + '/api/board', { headers: { cookie: felipe } })).json()).preferences.background, 'noite');
+  assert.equal((await put(felipe, 'couro')).status, 200);
+  assert.equal((await put(felipe, 'imagem')).status, 400);
+  assert.equal((await put(felipe, 'neon')).status, 400);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const sent = await fetch(origin + '/api/preferences/background', { method: 'POST', headers: { cookie: felipe, 'content-type': 'image/png' }, body: png });
+  assert.equal(sent.status, 201);
+  const prefs = await sent.json();
+  assert.equal(prefs.background, 'imagem');
+  assert.equal((await fetch(`${origin}/api/backgrounds/${prefs.backgroundFile}`, { headers: { cookie: felipe } })).status, 200);
+  assert.equal((await fetch(`${origin}/api/backgrounds/${prefs.backgroundFile}`, { headers: { cookie: bola } })).status, 404);
+  assert.equal((await (await fetch(origin + '/api/board', { headers: { cookie: bola } })).json()).preferences.background, 'noite');
+});
+
+test('cada cartão ganha um número do projeto (GA-1, GA-2) e cartões antigos são numerados na ordem', async () => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const member = await store.createMember({ name: 'Felipe' });
+  const actor = { ...member, source: 'Web' };
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  const other = await store.createProject({ name: 'Site' });
+  const first = await store.createCard({ projectId: project.id, title: 'Primeiro' }, actor);
+  const second = await store.createCard({ projectId: project.id, title: 'Segundo' }, actor);
+  const elsewhere = await store.createCard({ projectId: other.id, title: 'Outro projeto' }, actor);
+  assert.equal(first.key, 'GA-1');
+  assert.equal(second.key, 'GA-2');
+  assert.equal(elsewhere.key, 'ST-1');
+  // Cartão gravado antes dos números existirem.
+  const legacy = { ...second, id: crypto.randomUUID(), title: 'Antigo', history: [{ ...second.history[0], at: new Date().toISOString() }] };
+  delete legacy.number; delete legacy.key; delete legacy.version;
+  await database.query('INSERT INTO cards (id, project_id, version, document) VALUES (?, ?, ?, ?)', [legacy.id, project.id, 1, JSON.stringify(legacy)]);
+  const numbered = (await store.listCards()).find((card) => card.id === legacy.id);
+  assert.equal(numbered.key, 'GA-3');
+  await database.close();
+});

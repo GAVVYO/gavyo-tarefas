@@ -28,7 +28,9 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
     'members (id VARCHAR(36) PRIMARY KEY, email VARCHAR(254) UNIQUE NOT NULL, name VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL)',
     'projects (id VARCHAR(36) PRIMARY KEY, name VARCHAR(100) UNIQUE NOT NULL)',
     'cards (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, version INTEGER NOT NULL, document MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',
-    'credentials (digest VARCHAR(64) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, source VARCHAR(20) NOT NULL, expires BIGINT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))'
+    'credentials (digest VARCHAR(64) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, source VARCHAR(20) NOT NULL, expires BIGINT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))',
+    // Preferências de cada pessoa (fundo do quadro).
+    'preferences (member_id VARCHAR(36) PRIMARY KEY, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))'
   ];
   for (const definition of definitions) await query(`CREATE TABLE IF NOT EXISTS ${definition}`);
   return { query, close };

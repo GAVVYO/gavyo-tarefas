@@ -50,7 +50,7 @@ Para testes locais, troque o URL por `http://127.0.0.1:3000/mcp`. Use o botão *
 
 ## Hospedagem
 
-O deploy previsto usa um site Node.js 22 e um banco MySQL dedicados. Configure `NODE_ENV=production`, `PUBLIC_ORIGIN=https://tarefas.gavyo.me` e `DATABASE_URL` nas variáveis da hospedagem. O servidor usa a porta recebida em `PORT`. A URL do MySQL deve ter usuário e senha codificados para URL quando contiverem caracteres especiais.
+O deploy previsto usa um site Node.js 22 e um banco MySQL dedicados. Configure `NODE_ENV=production`, `PUBLIC_ORIGIN=https://tarefas.gavyo.me` e `DATABASE_URL` nas variáveis da hospedagem. O servidor usa a porta recebida em `PORT`. Os prints dos cartões ficam em `UPLOAD_DIR` (padrão `.data/uploads`); na hospedagem, aponte para uma pasta fora da pasta do app, para uma publicação nova não apagar as imagens. A URL do MySQL deve ter usuário e senha codificados para URL quando contiverem caracteres especiais.
 
 Rode `npm run setup` com a conexão de produção e as variáveis do primeiro administrador, retire `ADMIN_PIN` do ambiente, se usado e inicie com `npm start`. Confira HTTPS, login e MCP no domínio antes de compartilhar o quadro.
 
