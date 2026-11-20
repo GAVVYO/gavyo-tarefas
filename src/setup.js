@@ -1,20 +1,11 @@
 import { openDatabase } from './db.js';
 import { createStore } from './store.js';
+import { setupWorkspace } from './bootstrap.js';
 
 const db = await openDatabase();
 try {
-  const store = createStore(db);
-  const { ADMIN_NAME, ADMIN_PIN } = process.env;
-  if (!(await store.members()).length) {
-    await store.createMember({ name: ADMIN_NAME, pin: ADMIN_PIN || undefined, role: 'admin' });
-    console.log('Administrador inicial criado.');
-  }
-  for (const name of (process.env.INITIAL_PROJECTS || 'GAVYO Auto').split(',').map((value) => value.trim()).filter(Boolean)) {
-    if (!(await store.projects()).some((project) => project.name === name)) {
-      await store.createProject({ name });
-      console.log(`Projeto criado: ${name}`);
-    }
-  }
+  await setupWorkspace(createStore(db));
+  console.log('Configuração inicial conferida.');
 } finally {
   await db.close();
 }

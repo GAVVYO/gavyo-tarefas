@@ -50,9 +50,8 @@ export function createStore({ query }) {
     return `pin:${salt}:${key.toString('hex')}`;
   }
 
-  async function createMember(input) {
+  async function createMember(input, id = randomUUID()) {
     const { name, role, pin } = memberInput.parse(input);
-    const id = randomUUID();
     // Keep the legacy unique email column compatible with existing databases.
     await query('INSERT INTO members (id, email, name, password, role) VALUES (?, ?, ?, ?, ?)',
       [id, `${id}@perfil.invalid`, name, await encodePin(pin), role]);

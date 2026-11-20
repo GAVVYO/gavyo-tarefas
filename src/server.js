@@ -1,6 +1,7 @@
 import { openDatabase } from './db.js';
 import { createStore } from './store.js';
 import { createApp } from './app.js';
+import { setupWorkspace } from './bootstrap.js';
 
 const production = process.env.NODE_ENV === 'production';
 const origin = process.env.PUBLIC_ORIGIN || '';
@@ -10,6 +11,7 @@ if (production && (!origin.startsWith('https://') || new URL(origin).origin !== 
 
 const database = await openDatabase();
 const store = createStore(database);
+if (production && process.env.ADMIN_NAME) await setupWorkspace(store, process.env, { onlyWhenEmpty: true });
 const app = createApp(store, { production, origin });
 const port = Number(process.env.PORT || 3000);
 app.listen(port, production ? '0.0.0.0' : '127.0.0.1', () => console.log(`GAVYO Tarefas na porta ${port}`));
