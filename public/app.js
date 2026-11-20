@@ -1,4 +1,5 @@
 import { playCardFlight } from './card-flight.js';
+import { avatarFor, setupProfileDock } from './profile-dock.js';
 
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
@@ -74,6 +75,8 @@ async function refresh({ shell = false } = {}) {
 }
 
 function renderShell() {
+  const profileWasOpen = root.querySelector('.profile-dock')?.dataset.open === 'true';
+  const profileAvatar = avatarFor(board.user.name);
   root.className = 'wrap';
   root.innerHTML = `<header class="top">
     <div class="brand-island">${brand}</div>
@@ -102,8 +105,25 @@ function renderShell() {
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
   </div>
-  <div id="content"></div>`;
+  <div id="content"></div>
+  <div class="profile-dock" data-open="false">
+    <button class="profile-handle" type="button" aria-label="Abrir perfil" aria-expanded="false"
+      aria-controls="profile-panel">${icon('grip-vertical')}</button>
+    <aside class="profile-panel" id="profile-panel" aria-labelledby="profile-name" inert>
+      <button class="btn ghost tile profile-close" type="button" aria-label="Fechar perfil">${icon('x')}</button>
+      <div class="profile-avatar-stage">
+        ${profileAvatar ? '' : `<span class="profile-initials" aria-hidden="true">${escape(initialsOf(board.user.name))}</span>`}
+      </div>
+      <div class="profile-info">
+        <h2 id="profile-name">${escape(board.user.name)}</h2>
+        <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
+      </div>
+    </aside>
+  </div>`;
   renderContents();
+  setupProfileDock(root.querySelector('.profile-dock'), {
+    avatar: profileAvatar, name: board.user.name, initiallyOpen: profileWasOpen
+  });
 }
 
 function navigate(nextView) {

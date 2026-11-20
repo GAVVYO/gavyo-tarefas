@@ -13,7 +13,13 @@ export function createApp(store, { production = false, origin = '' } = {}) {
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
     res.set({
-      'Content-Security-Policy': "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      'Content-Security-Policy': [
+        "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "img-src 'self' blob: data:",
+        "connect-src 'self' blob:",
+        // Stylesheet inserted in the shadow root by the bundled model viewer.
+        "style-src 'self' 'sha256-PXtZZkJMMyc18o/DN1ZEFOJ2qEGq95IQbVaJFMOXOb0='",
+        "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"
+      ].join('; '),
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer'
     });
     next();
@@ -57,6 +63,7 @@ export function createApp(store, { production = false, origin = '' } = {}) {
     await store.revoke(credential(req));
     res.clearCookie('gavyo_session', { path: '/', sameSite: 'strict', secure: production }).json({ ok: true });
   });
+  app.use('/api/avatar-assets', express.static(file('../assets/avatars/'), { index: false }));
   app.get('/api/board', async (req, res) => {
     const [projects, members, cards, archive] = await Promise.all([
       store.projects(), store.members(), store.listCards(), store.listCards({ archived: true })
@@ -96,6 +103,8 @@ export function createApp(store, { production = false, origin = '' } = {}) {
     await serveMcp(req, res, store, actor);
   });
 
+  app.get('/assets/model-viewer.min.js', (_req, res) =>
+    res.sendFile(file('../node_modules/@google/model-viewer/dist/model-viewer.min.js')));
   app.use('/assets/manrope', express.static(file('../node_modules/@fontsource-variable/manrope/files/')));
   app.use('/assets/icons', express.static(file('../node_modules/lucide-static/icons/')));
   app.use(express.static(file('../public/')));
