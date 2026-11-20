@@ -287,9 +287,16 @@ form,.field,.detail-section{display:grid;gap:10px}
   .top-actions .tile{padding-inline:5px}
   .filters .project-picker{grid-column:1 / -1}
 }
+.card-flight{position:fixed;inset:0;z-index:5;overflow:hidden;pointer-events:none}
+.flight-hawk,.flight-cargo{position:absolute;inset:0 auto auto 0;will-change:transform}
+.flight-hawk{z-index:1;height:auto;filter:drop-shadow(0 4px 9px #000a)}
+.flight-cargo{box-shadow:0 10px 22px #0009;transform-origin:center top}
+.card.flight-landing:not(:focus-within){opacity:.15}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
   ::view-transition-group(*){animation:none!important}
+  .card-flight{display:none}
+  .card.flight-landing:not(:focus-within){opacity:1}
 }
 .btn[aria-pressed=true]{background:var(--accent-soft);border-color:#927753;color:var(--accent)}
 html[data-card-transition] .card-transition{view-transition-name:moving-card}

@@ -1,3 +1,5 @@
+import { playCardFlight } from './card-flight.js';
+
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
 const notice = document.querySelector('#notice');
@@ -366,20 +368,20 @@ function showToken(token, source) {
   </div>`);
 }
 
-async function placeCard(id, status, byDrag = false) {
+async function placeCard(id, status, dragSource) {
   const card = cardById(id);
   if (!card || status === card.status) return;
   await request(`/cards/${id}`, 'PATCH', { status, version: card.version });
   const data = await request('/board');
   const paint = () => {
     board = data;
-    moved = byDrag ? '' : id;
+    moved = dragSource ? '' : id;
     renderContents();
     moved = '';
   };
   const html = document.documentElement;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!byDrag && !reduce && document.startViewTransition && !html.hasAttribute('data-card-transition')) {
+  if (!dragSource && !reduce && document.startViewTransition && !html.hasAttribute('data-card-transition')) {
     const old = document.querySelector(`[data-id="${id}"]`);
     if (old) {
       html.setAttribute('data-card-transition', '');
@@ -395,7 +397,10 @@ async function placeCard(id, status, byDrag = false) {
       void transition.finished.then(cleanup, cleanup);
       await transition.updateCallbackDone;
     } else paint();
-  } else paint();
+  } else {
+    paint();
+    if (dragSource) playCardFlight(root.querySelector(`[data-id="${id}"]`), dragSource);
+  }
   message(`Cartão movido para ${stages[status]}.`);
 }
 
@@ -576,7 +581,8 @@ document.addEventListener('drop', (event) => {
   if (!column || !dragged) return;
   event.preventDefault();
   column.classList.remove('drop');
-  void placeCard(dragged, column.dataset.status, true).catch((error) => message(error.message));
+  const source = root.querySelector(`[data-id="${dragged}"]`)?.getBoundingClientRect();
+  if (source) void placeCard(dragged, column.dataset.status, source).catch((error) => message(error.message));
 });
 
 async function start() {
