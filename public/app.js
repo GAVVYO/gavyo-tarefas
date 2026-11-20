@@ -464,8 +464,8 @@ function editorPanels(card) {
     return [member.id, member.name, emblem];
   })];
   const panels = {
-    title: field('Título', `<input class="task-title-input" name="title" value="${escape(card.title)}" placeholder="Nome da tarefa" maxlength="160">`),
-    description: field('Descrição', `<textarea class="task-writing" name="description" maxlength="8000" placeholder="Escreva o que precisa ser feito…">${escape(card.description)}</textarea>`),
+    title: `<input class="task-title-input" name="title" value="${escape(card.title)}" placeholder="Nome da tarefa" maxlength="160" aria-label="Título">`,
+    description: `<textarea class="task-writing" name="description" maxlength="8000" placeholder="Escreva o que precisa ser feito…" aria-label="Descrição">${escape(card.description)}</textarea>`,
     assignee: taskOptions('assigneeId', people, card.assigneeId || ''),
     due: `<input type="hidden" name="due" value="${card.due || ''}"><div class="task-calendar"></div>
           ${button('Tirar prazo', 'task-clear-day', '', 'ghost')}`,
@@ -481,14 +481,40 @@ function editorPanels(card) {
   </section>`).join('');
 }
 
+/** Hora em palavras: "hoje, 21:54", "ontem, 10:02", "18/11, 09:30". */
+function when(iso) {
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Fortaleza' });
+  const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' }).format(at);
+  const diff = Math.round((Date.parse(today()) - Date.parse(day)) / DAY);
+  if (diff === 0) return `hoje, ${time}`;
+  if (diff === 1) return `ontem, ${time}`;
+  return `${day.split('-').reverse().slice(0, 2).join('/')}, ${time}`;
+}
+
+const memberNamed = (name) => board.members.find((member) => member.name === name) || { name };
+const agentMark = (source) => (AGENTS.includes(source)
+  ? `<span class="card-agent" title="Feito pelo ${source}">${icon('bot')}<span>${source}</span></span>` : '');
+
+/** O que mudou, em frase: "mudou a etapa e mexeu no checklist". */
+const ACTIONS = {
+  'Criou o cartão': 'criou o cartão', Título: 'mudou o título', Descrição: 'mudou a descrição',
+  Responsável: 'trocou o responsável', Prazo: 'mudou o prazo', Prioridade: 'mudou a prioridade',
+  Etapa: 'mudou a etapa', Bloqueio: 'mexeu no bloqueio', Arquivo: 'arquivou ou restaurou',
+  Checklist: 'mexeu no checklist', Comentário: 'comentou'
+};
+function actionSentence(action) {
+  const parts = action.split(', ').map((part) => ACTIONS[part] || part.toLowerCase());
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts.at(-1)}` : parts[0];
+}
+
 function showCard(card, origin) {
   if (!card) return;
   const project = board.projects.find((item) => item.id === card.projectId);
   const assignee = board.members.find((item) => item.id === card.assigneeId);
   const done = card.checklist.filter((item) => item.done).length;
-  const details = `<p class="task-project">${icon('layers-2')} ${escape(project?.name)}
-    ${card.archived ? '<span class="chip">Arquivado</span>' : ''}
-    ${card.blocked ? '<span class="chip warn">Bloqueado</span>' : ''}</p>`;
+  const due = dueLabel(card);
+  const details = `<p class="task-project">${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}</p>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
     <div class="inspector-edit-actions" hidden>
@@ -503,32 +529,39 @@ function showCard(card, origin) {
     ['conversation', 'Conversa', 'chat'],
     ['history', 'Histórico', 'history']
   ];
-  openDialog(editArea('title', `${taskIcon('task')} <span>${escape(card.title)}</span>`, 'task-heading-edit'), `
+  openDialog(editArea('title', `<span>${escape(card.title)}</span>`, 'task-heading-edit'), `
     <div class="inspector-overview">
       <div class="inspector-meta">
-        ${editArea('status', `${taskIcon('stage')} ${stages[card.status]}`, 'inspector-stage')}
-        ${editArea('assignee', `${assignee ? `<span class="avatar" aria-hidden="true">${escape(initialsOf(assignee.name))}</span>` : taskIcon('person')}
+        ${editArea('status', stages[card.status], 'inspector-stage')}
+        ${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
           ${escape(assignee?.name || 'Sem responsável')}`)}
-        ${editArea('due', `${taskIcon('date')} ${card.due ? card.due.split('-').reverse().join('/') : 'Sem prazo'}`)}
-        ${editArea('priority', `${taskIcon('priority')} ${priorities[card.priority]}`)}
+        ${editArea('due', due ? `<span class="due" data-tone="${due.tone}">${due.text}</span>` : `${taskIcon('date')} Sem prazo`, 'inspector-due')}
+        ${editArea('priority', card.priority === 'alta' ? '<span class="urgent">Urgente</span>' : `${taskIcon('priority')} Prioridade ${priorities[card.priority].toLowerCase()}`)}
       </div>
-      ${button('Editar', 'task-section', 'pencil', 'inspector-edit', 'data-section="edit"')}
+      <div class="inspector-actions">
+        ${button('Editar', 'task-section', 'pencil', 'inspector-edit ghost', 'data-section="edit"')}
+        ${nextCardAction(card)}
+      </div>
     </div>
     <nav class="inspector-nav" aria-label="Seções da ficha">
       ${tabs.map(([key, label, glyph]) => button(taskIcon(glyph) + label, 'task-section', '', 'ghost',
         `data-section="${key}" aria-pressed="${key === 'summary'}" aria-controls="task-${key}"`)).join('')}
     </nav>
     <section class="inspector-section" id="task-summary" data-task-section="summary">
-      ${card.blocked ? `<div class="inspector-block">${taskIcon('block')}
-        <div><h3>${editArea('blocked', 'Bloqueio')}</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
+      ${card.blocked ? `<div class="inspector-block">${icon('octagon-pause')}
+        <div><h3>${editArea('blocked', 'Travado')}</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
       <section class="inspector-description">
-        <h3>${editArea('description', taskIcon('text') + 'Descrição')}</h3><p class="${card.description ? '' : 'muted'}">${card.description ? linkify(card.description) : 'Sem descrição.'}</p>
+        <h3 class="sr-only">Descrição</h3>
+        ${card.description ? `<p>${linkify(card.description)}</p>`
+          : editArea('description', `${icon('plus')} Escrever o que precisa ser feito`, 'inspector-empty')}
       </section>
       ${`<section class="inspector-checks">
-        <div class="inspector-progress-label"><h3>${editArea('checklist', taskIcon('checks') + 'Checklist')}</h3><span>${card.checklist.length ? `${done}/${card.checklist.length}` : 'Sem passos'}</span></div>
-        ${card.checklist.length ? `<progress value="${done}" max="${card.checklist.length}" aria-label="Passos concluídos"></progress>` : ''}
-        <ul>${card.checklist.map((item) => `<li data-done="${item.done}">${icon(item.done ? 'circle-check' : 'circle')}
-          <span>${escape(item.title)}</span><span class="sr-only">${item.done ? 'Concluído' : 'A fazer'}</span></li>`).join('')}</ul>
+        <div class="inspector-progress-label"><h3>Passos</h3>${editArea('checklist', `${icon('pencil')} ${card.checklist.length ? 'Mudar passos' : 'Adicionar passos'}`, 'inspector-link')}</div>
+        ${card.checklist.length ? `<div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" role="img" aria-label="${done} de ${card.checklist.length} passos feitos">
+          <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${done}/${card.checklist.length}</span></div>` : ''}
+        <ul class="steps">${card.checklist.map((item, index) => `<li><button type="button" class="step" data-action="toggle-check"
+          data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
+          <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button></li>`).join('')}</ul>
       </section>`}
     </section>
     <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
@@ -549,6 +582,7 @@ function showCard(card, origin) {
         <div class="error task-edit-error" role="alert"></div>
       </form>
     </section>`, '#dialog-title', { details, footer, origin });
+  paintTrails(dialog);
 }
 
 function setTaskSection(section, step = 'title') {
@@ -586,15 +620,18 @@ function setEditorStep(step, focus = true) {
 
 function cardActivity(card) {
   return card.comments.map((item) => `<div class="comment">
-    <div class="comment-by"><span class="avatar" aria-hidden="true">${escape(initialsOf(item.actor))}</span>
-      <div><strong>${escape(item.actor)}</strong><small>${dateFormat.format(new Date(item.at))}</small></div>
-    </div><p>${linkify(item.text)}</p></div>`).join('') || '<p class="muted">Nenhum comentário.</p>';
+    ${face(memberNamed(item.actor), 'card-face')}
+    <div class="comment-body"><p class="comment-by"><strong>${escape(item.actor)}</strong>${agentMark(item.source)}<small>${when(item.at)}</small></p>
+      <p class="comment-text">${linkify(item.text)}</p></div></div>`).join('') ||
+    '<p class="muted inspector-quiet">Ninguém comentou ainda. Escreva abaixo para a equipe (e os assistentes) verem.</p>';
 }
 
+/** Linha do tempo: quem fez, por qual canal, o quê e quando. */
 function cardHistory(card) {
-  return card.history.slice().reverse().map((entry) => `<li>
-    <strong>${escape(entry.actor)}${entry.source === 'Web' ? '' : ' via ' + escape(entry.source)}</strong>
-    <span>${escape(entry.action)}</span><small>${dateFormat.format(new Date(entry.at))}</small>
+  return card.history.slice().reverse().map((entry) => `<li class="moment" data-agent="${AGENTS.includes(entry.source)}">
+    ${face(memberNamed(entry.actor), 'card-face')}
+    <p><strong>${escape(entry.actor)}</strong> ${escape(actionSentence(entry.action))}${agentMark(entry.source)}</p>
+    <small>${when(entry.at)}</small>
   </li>`).join('');
 }
 
@@ -757,11 +794,27 @@ document.addEventListener('click', async (event) => {
       const menu = control.closest('details');
       if (menu) menu.open = false;
       control.disabled = true;
+      const fromTask = dialog.open && dialog.contains(control);
       await placeCard(card, status);
-      root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+      if (fromTask) showCard(cardById(card));
+      else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'toggle-check') {
+      const current = cardById(card);
+      const index = Number(control.dataset.index);
+      const checklist = current.checklist.map((item, i) => (i === index ? { ...item, done: !item.done } : item));
+      control.setAttribute('aria-pressed', String(checklist[index].done));
+      await request(`/cards/${card}`, 'PATCH', { checklist, version: current.version });
+      await refresh();
+      const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
+      showCard(cardById(card));
+      if (section && section !== 'summary') setTaskSection(section);
+      dialog.querySelector(`[data-action=toggle-check][data-index="${index}"]`)?.focus({ preventScroll: true });
+      if (checklist.every((item) => item.done)) message('Todos os passos feitos. A águia chegou!');
     } else if (action === 'archive-card' || action === 'restore') {
+      const fromTask = dialog.open && dialog.contains(control);
       await updateArchive(card, action === 'archive-card');
-      root.querySelector('[aria-current=page]')?.focus();
+      if (fromTask) showCard(cardById(card));
+      else root.querySelector('[aria-current=page]')?.focus();
     } else if (action === 'add-check') {
       const checklist = dialog.querySelector('#checklist');
       if (checklist.children.length >= 60) return message('O cartão aceita até 60 passos.');
