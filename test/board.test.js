@@ -124,3 +124,51 @@ test('perfis antigos passam a usar PIN padrão e tentativas são limitadas por p
   for (let i = 0; i < 8; i++) assert.equal((await login('4321')).status, 401);
   assert.equal((await login('1234')).status, 429);
 });
+
+test('prints do cartão: só imagem de verdade, só para quem entrou, e somem do disco ao tirar', async (t) => {
+  const { mkdtemp, readdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const uploads = await mkdtemp(join(tmpdir(), 'gavyo-prints-'));
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { uploads }).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const member = await store.createMember({ name: 'Bola' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  const login = await fetch(origin + '/api/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' })
+  });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const card = await store.createCard({ projectId: project.id, title: 'Tela com erro' }, { ...member, source: 'Web' });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const send = (body, type = 'image/png', headers = { cookie }) =>
+    fetch(`${origin}/api/cards/${card.id}/attachments`, { method: 'POST', headers: { 'content-type': type, ...headers }, body });
+
+  assert.equal((await send(png, 'image/png', {})).status, 401);
+  assert.equal((await send(Buffer.from('<script>alert(1)</script>'))).status, 400);
+  const added = await send(png);
+  assert.equal(added.status, 201);
+  const saved = await added.json();
+  assert.equal(saved.attachments.length, 1);
+  assert.equal(saved.history.at(-1).action, 'Print');
+  const [attachment] = saved.attachments;
+
+  const file = await fetch(`${origin}/api/files/${card.id}/${attachment.file}`, { headers: { cookie } });
+  assert.equal(file.status, 200);
+  assert.equal(file.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), png);
+  assert.equal((await fetch(`${origin}/api/files/${card.id}/${attachment.file}`)).status, 401);
+
+  const removed = await fetch(`${origin}/api/cards/${card.id}/attachments/${attachment.id}`, {
+    method: 'DELETE', headers: { cookie, 'content-type': 'application/json' }, body: '{}'
+  });
+  assert.equal(removed.status, 200);
+  assert.equal((await removed.json()).attachments.length, 0);
+  assert.deepEqual(await readdir(join(uploads, card.id)), []);
+});

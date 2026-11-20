@@ -231,6 +231,7 @@ function nextCardAction(card) {
 }
 
 const DAY = 86400000;
+const fileUrl = (card, attachment) => `/api/files/${card.id}/${attachment.file}`;
 const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', timeZone: 'UTC' });
 /** Prazo em palavras: "Atrasado 2 dias", "Hoje", "Amanhã", "Sex, 24/11". */
 function dueLabel(card) {
@@ -266,6 +267,9 @@ function cardTemplate(card) {
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
     data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" ${card.archived ? '' : 'draggable="true"'}>
+    ${card.attachments?.length && card.status !== 'done' ? `<button type="button" class="card-cover" data-action="edit" data-card="${card.id}" tabindex="-1" aria-hidden="true">
+      <img src="${fileUrl(card, card.attachments.at(-1))}" alt="" loading="lazy" draggable="false">
+      ${card.attachments.length > 1 ? `<span class="cover-count">${icon('images')}${card.attachments.length}</span>` : ''}</button>` : ''}
     ${card.blocked && card.status !== 'done' ? `<button type="button" class="card-block" data-action="view-block" data-card="${card.id}">
       ${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
     <div class="card-top">
@@ -283,6 +287,7 @@ function cardTemplate(card) {
       <span class="card-signals">
         ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
         ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')}${card.comments.length}</span>` : ''}
+        ${card.attachments?.length && card.status === 'done' ? `<span class="signal" aria-label="${card.attachments.length} prints">${icon('image')}${card.attachments.length}</span>` : ''}
       </span>
       <div class="card-footer">${nextCardAction(card)}</div>
     </div>
@@ -501,7 +506,7 @@ const ACTIONS = {
   'Criou o cartão': 'criou o cartão', Título: 'mudou o título', Descrição: 'mudou a descrição',
   Responsável: 'trocou o responsável', Prazo: 'mudou o prazo', Prioridade: 'mudou a prioridade',
   Etapa: 'mudou a etapa', Bloqueio: 'mexeu no bloqueio', Arquivo: 'arquivou ou restaurou',
-  Checklist: 'mexeu no checklist', Comentário: 'comentou'
+  Checklist: 'mexeu no checklist', Comentário: 'comentou', Print: 'pôs um print', 'Tirou print': 'tirou um print'
 };
 function actionSentence(action) {
   const parts = action.split(', ').map((part) => ACTIONS[part] || part.toLowerCase());
@@ -535,8 +540,8 @@ function showCard(card, origin) {
         ${editArea('status', stages[card.status], 'inspector-stage')}
         ${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
           ${escape(assignee?.name || 'Sem responsável')}`)}
-        ${editArea('due', due ? `<span class="due" data-tone="${due.tone}">${due.text}</span>` : `${taskIcon('date')} Sem prazo`, 'inspector-due')}
-        ${editArea('priority', card.priority === 'alta' ? '<span class="urgent">Urgente</span>' : `${taskIcon('priority')} Prioridade ${priorities[card.priority].toLowerCase()}`)}
+        ${editArea("due", `${taskIcon("date")} ${due ? due.text : "Sem prazo"}`)}
+        ${editArea('priority', `${taskIcon('priority')} ${card.priority === 'alta' ? 'Urgente' : `Prioridade ${priorities[card.priority].toLowerCase()}`}`)}
       </div>
       <div class="inspector-actions">
         ${button('Editar', 'task-section', 'pencil', 'inspector-edit ghost', 'data-section="edit"')}
@@ -554,6 +559,16 @@ function showCard(card, origin) {
         <h3 class="sr-only">Descrição</h3>
         ${card.description ? `<p>${linkify(card.description)}</p>`
           : editArea('description', `${icon('plus')} Escrever o que precisa ser feito`, 'inspector-empty')}
+      </section>
+      <section class="inspector-prints" aria-labelledby="prints-title">
+        <div class="inspector-progress-label"><h3 id="prints-title">Prints</h3>${(card.attachments || []).length ? `<span>${card.attachments.length}</span>` : ''}</div>
+        <ul class="prints">${(card.attachments || []).map((item, index) => `<li><button type="button" class="print" data-action="view-print"
+          data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${card.attachments.length}, de ${escape(item.by)}">
+          <img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}
+          ${card.archived ? '' : `<li class="print-add-cell"><label class="print-add" data-drop="${card.id}">
+            ${icon('image-plus')}<span><b>Colar print</b> com Ctrl+V,<br>arrastar ou escolher</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}">
+          </label></li>`}</ul>
       </section>
       ${`<section class="inspector-checks">
         <div class="inspector-progress-label"><h3>Passos</h3>${editArea('checklist', `${icon('pencil')} ${card.checklist.length ? 'Mudar passos' : 'Adicionar passos'}`, 'inspector-link')}</div>
@@ -726,9 +741,113 @@ async function updateArchive(id, archived) {
   message(archived ? 'Cartão arquivado.' : 'Cartão restaurado.');
 }
 
+/** Prints grandes viram WebP de até 2400 px antes de subir (texto continua legível). */
+async function shrinkImage(file) {
+  if (file.type === 'image/gif' || (file.size < 3_000_000 && file.type !== 'image/bmp')) return file;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) });
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), 'image/webp', 0.9));
+}
+
+async function uploadPrints(cardId, files) {
+  const images = [...files].filter((file) => /^image\/(png|jpeg|webp|gif)$/.test(file.type));
+  if (!images.length) return message('Só imagens: PNG, JPG, WebP ou GIF.');
+  const drop = dialog.querySelector('.print-add');
+  drop?.setAttribute('data-busy', '');
+  try {
+    for (const file of images) {
+      const body = await shrinkImage(file);
+      const response = await fetch(`/api/cards/${cardId}/attachments`, { method: 'POST', headers: { 'content-type': body.type || file.type }, body });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Não deu para enviar o print.');
+    }
+    await refresh();
+    if (dialog.open) {
+      showCard(cardById(cardId));
+      dialog.querySelector('.prints li:nth-last-child(2) .print')?.setAttribute('data-fresh', '');
+    }
+    message(images.length === 1 ? 'Print colado no cartão.' : `${images.length} prints colados no cartão.`);
+  } catch (error) {
+    message(error.message);
+  } finally {
+    drop?.removeAttribute('data-busy');
+  }
+}
+
+/** Visualizador: o print em tela cheia, setas para o próximo, apagar e abrir o original. */
+function viewPrint(cardId, index) {
+  const card = cardById(cardId);
+  const list = card?.attachments || [];
+  const item = list[index];
+  document.querySelector('.viewer')?.remove();
+  if (!item) return;
+  const viewer = document.createElement('div');
+  viewer.className = 'viewer';
+  viewer.setAttribute('role', 'dialog');
+  viewer.setAttribute('aria-modal', 'true');
+  viewer.setAttribute('aria-label', `Print ${index + 1} de ${list.length}`);
+  viewer.innerHTML = `<img class="viewer-img" src="${fileUrl(card, item)}" alt="Print ${index + 1} do cartão ${escape(card.title)}">
+    <div class="viewer-bar">
+      <span>${face(memberNamed(item.by), 'card-face')}<b>${escape(item.by)}</b> · ${when(item.at)} · ${index + 1} de ${list.length}</span>
+      <span class="viewer-actions">
+        <a class="btn ghost" href="${fileUrl(card, item)}" target="_blank" rel="noopener">${icon('external-link')}Abrir original</a>
+        ${card.archived ? '' : button('Tirar', 'remove-print', 'trash-2', 'ghost', `data-card="${card.id}" data-attachment="${item.id}"`)}
+        ${iconButton('Fechar', 'close-viewer', 'x')}
+      </span>
+    </div>
+    ${index > 0 ? `<button type="button" class="viewer-nav prev" data-action="view-print" data-card="${card.id}" data-index="${index - 1}" aria-label="Print anterior">${icon('chevron-left')}</button>` : ''}
+    ${index < list.length - 1 ? `<button type="button" class="viewer-nav next" data-action="view-print" data-card="${card.id}" data-index="${index + 1}" aria-label="Próximo print">${icon('chevron-right')}</button>` : ''}`;
+  viewer.dataset.card = cardId;
+  viewer.dataset.index = String(index);
+  document.body.append(viewer);
+  viewer.querySelector('[data-action=close-viewer]').focus();
+}
+
+document.addEventListener('keydown', (event) => {
+  const viewer = document.querySelector('.viewer');
+  if (!viewer) return;
+  const index = Number(viewer.dataset.index);
+  if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); viewer.remove(); dialog.querySelector(`.print[data-index="${index}"]`)?.focus(); }
+  if (event.key === 'ArrowRight') viewPrint(viewer.dataset.card, index + 1);
+  if (event.key === 'ArrowLeft' && index > 0) viewPrint(viewer.dataset.card, index - 1);
+}, true);
+
+// Ctrl+V com a ficha aberta cola o print no cartão; arrastar uma imagem para a ficha também.
+document.addEventListener('paste', (event) => {
+  const zone = dialog.open && dialog.querySelector('[data-upload]');
+  const files = [...(event.clipboardData?.files || [])];
+  if (!zone || !files.some((file) => file.type.startsWith('image/'))) return;
+  event.preventDefault();
+  void uploadPrints(zone.dataset.upload, files);
+});
+dialog.addEventListener('dragover', (event) => {
+  const zone = dialog.querySelector('.print-add');
+  if (!zone || !event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault();
+  zone.dataset.over = '';
+});
+dialog.addEventListener('dragleave', (event) => {
+  if (!dialog.contains(event.relatedTarget)) delete dialog.querySelector('.print-add')?.dataset.over;
+});
+dialog.addEventListener('drop', (event) => {
+  const zone = dialog.querySelector('[data-upload]');
+  if (!zone || !event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  delete dialog.querySelector('.print-add')?.dataset.over;
+  void uploadPrints(zone.dataset.upload, event.dataTransfer.files);
+});
+document.addEventListener('change', (event) => {
+  const input = event.target.closest?.('[data-upload]');
+  if (!input?.files?.length) return;
+  void uploadPrints(input.dataset.upload, input.files).finally(() => { input.value = ''; });
+});
+
 document.addEventListener('click', async (event) => {
   const control = event.target.closest('button[data-action]');
   if (!control) {
+    if (event.target.classList?.contains('viewer')) event.target.remove();
     for (const menu of document.querySelectorAll('.menu[open]')) if (!menu.contains(event.target)) menu.open = false;
     return;
   }
@@ -798,6 +917,16 @@ document.addEventListener('click', async (event) => {
       await placeCard(card, status);
       if (fromTask) showCard(cardById(card));
       else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'view-print') {
+      viewPrint(card, Number(control.dataset.index));
+    } else if (action === 'close-viewer') {
+      document.querySelector('.viewer')?.remove();
+    } else if (action === 'remove-print') {
+      document.querySelector('.viewer')?.remove();
+      await request(`/cards/${card}/attachments/${control.dataset.attachment}`, 'DELETE', {});
+      await refresh();
+      if (dialog.open) showCard(cardById(card));
+      message('Print tirado do cartão.');
     } else if (action === 'toggle-check') {
       const current = cardById(card);
       const index = Number(control.dataset.index);

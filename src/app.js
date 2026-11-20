@@ -1,4 +1,6 @@
 import express from 'express';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { AppError, pinInput, sources } from './store.js';
@@ -7,7 +9,17 @@ import { serveMcp } from './mcp.js';
 const file = (path) => fileURLToPath(new URL(path, import.meta.url));
 const credential = (req) => /(?:^|;\s*)gavyo_session=([\w-]{43})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
 
-export function createApp(store, { production = false, origin = '' } = {}) {
+/** Prints e imagens: tipo conferido pelos primeiros bytes, não pelo nome. */
+const IMAGE_TYPES = {
+  'image/png': { ext: 'png', magic: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+  'image/jpeg': { ext: 'jpg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  'image/webp': { ext: 'webp', magic: (b) => b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP' },
+  'image/gif': { ext: 'gif', magic: (b) => b.subarray(0, 4).toString() === 'GIF8' }
+};
+const MAX_IMAGE = 8 * 1024 * 1024;
+
+export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads' } = {}) {
+  const uploadRoot = resolve(uploads);
   const app = express();
   const attempts = new Map();
 
@@ -48,7 +60,9 @@ export function createApp(store, { production = false, origin = '' } = {}) {
   app.use(express.json({ limit: '64kb' }));
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
-    if (req.method !== 'GET' && (!req.is('application/json') ||
+    // Imagens só na rota de anexos; um formulário de outro site não consegue mandar esse tipo sem pedir licença ao servidor.
+    const image = req.method === 'POST' && /^\/cards\/[^/]+\/attachments$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
+    if (req.method !== 'GET' && ((!req.is('application/json') && !image) ||
       (req.get('origin') && req.get('origin') !== (origin || `${req.protocol}://${req.get('host')}`)))) {
       throw new AppError(403, 'Origem da solicitação inválida.');
     }
@@ -100,6 +114,38 @@ export function createApp(store, { production = false, origin = '' } = {}) {
   app.patch('/api/cards/:id', async (req, res) => {
     const version = z.int().positive().parse(req.body.version);
     res.json(await store.updateCard(z.uuid().parse(req.params.id), req.body, req.actor, version));
+  });
+
+  app.post('/api/cards/:id/attachments', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const type = IMAGE_TYPES[req.get('content-type')];
+    if (!type || !Buffer.isBuffer(req.body) || !req.body.length) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF.');
+    if (!type.magic(req.body)) throw new AppError(400, 'Esse arquivo não é uma imagem de verdade.');
+    const name = `${crypto.randomUUID()}.${type.ext}`;
+    const dir = join(uploadRoot, id);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(join(dir, name), req.body, { mode: 0o600 });
+    try {
+      res.status(201).json(await store.addAttachment(id, { name, type: req.get('content-type'), size: req.body.length }, req.actor));
+    } catch (error) {
+      await unlink(join(dir, name)).catch(() => {});
+      throw error;
+    }
+  });
+  app.delete('/api/cards/:id/attachments/:attachment', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const { card, result } = await store.removeAttachment(id, z.uuid().parse(req.params.attachment), req.actor);
+    await unlink(join(uploadRoot, id, result.file)).catch(() => {});
+    res.json(card);
+  });
+  app.get('/api/files/:card/:name', async (req, res) => {
+    const id = z.uuid().parse(req.params.card);
+    const name = z.string().regex(/^[0-9a-f-]{36}\.(png|jpg|webp|gif)$/).parse(req.params.name);
+    const attachment = await store.cardFile(id, name);
+    if (!attachment) throw new AppError(404, 'Imagem não encontrada.');
+    const bytes = await readFile(join(uploadRoot, id, name)).catch(() => null);
+    if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
+    res.set({ 'Content-Type': attachment.type, 'Cache-Control': 'private, max-age=31536000, immutable' }).send(bytes);
   });
 
   function admin(req, _res, next) {

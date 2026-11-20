@@ -138,7 +138,7 @@ export function createStore({ query }) {
     if (!(await project(fields.projectId))) throw new AppError(404, 'Projeto não encontrado.');
     await validateAssignee(fields.assigneeId);
     const card = {
-      ...fields, id: randomUUID(), status: 'todo', blocked: '', archived: false, checklist: [],
+      ...fields, id: randomUUID(), status: 'todo', blocked: '', archived: false, checklist: [], attachments: [],
       comments: [], history: [event(actor, 'Criou o cartão')]
     };
     await query('INSERT INTO cards (id, project_id, version, document) VALUES (?, ?, ?, ?)',
@@ -190,5 +190,45 @@ export function createStore({ query }) {
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
   }
 
-  return { createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard };
+  /** Muda o cartão sem pedir versão (anexos): tenta de novo se outra pessoa salvou junto. */
+  async function changeCard(id, change, actor, action) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const row = await first('SELECT version, document FROM cards WHERE id = ?', [id]);
+      if (!row) throw new AppError(404, 'Cartão não encontrado.');
+      const { version, ...card } = decode(row);
+      card.attachments ??= [];
+      const result = change(card);
+      card.history.push(event(actor, action));
+      const saved = await query('UPDATE cards SET document = ?, version = ? WHERE id = ? AND version = ?',
+        [JSON.stringify(card), version + 1, id, version]);
+      if (saved.affectedRows === 1) return { card: { ...card, version: version + 1 }, result };
+    }
+    throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
+  }
+
+  /** Print ou imagem do cartão: o arquivo fica no disco, o cartão guarda só o registro. */
+  async function addAttachment(id, file, actor) {
+    const attachment = { id: randomUUID(), file: file.name, type: file.type, size: file.size, by: actor.name, at: new Date().toISOString() };
+    return (await changeCard(id, (card) => {
+      if (card.attachments.length >= 30) throw new AppError(400, 'O cartão aceita até 30 imagens.');
+      card.attachments.push(attachment);
+      return attachment;
+    }, actor, 'Print')).card;
+  }
+
+  async function removeAttachment(id, attachmentId, actor) {
+    return changeCard(id, (card) => {
+      const index = card.attachments.findIndex((item) => item.id === attachmentId);
+      if (index < 0) throw new AppError(404, 'Imagem não encontrada.');
+      return card.attachments.splice(index, 1)[0];
+    }, actor, 'Tirou print');
+  }
+
+  async function cardFile(id, name) {
+    const row = await first('SELECT document FROM cards WHERE id = ?', [id]);
+    const card = row && JSON.parse(row.document);
+    return card?.attachments?.find((item) => item.file === name) || null;
+  }
+
+  return { createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard, addAttachment, removeAttachment, cardFile };
 }
