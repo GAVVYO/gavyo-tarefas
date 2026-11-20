@@ -163,6 +163,50 @@ form,.field,.detail-section{display:grid;gap:10px}
 .history li+li{margin-top:6px}
 .comment{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .comment p{white-space:pre-wrap}
+/* Task sheet */
+.task-dialog{width:min(95vw,910px);border-radius:20px}
+.task-dialog[open]{display:flex;flex-direction:column;overflow:hidden;animation:none}
+.task-dialog .dialog-head{flex:none;align-items:flex-start;padding:17px 21px}
+.dialog-headline{min-width:0;overflow-wrap:anywhere}
+.task-dialog #dialog-title{font-size:clamp(1.12rem,3vw,1.58rem);line-height:1.2;outline:0}
+.task-project{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:.85rem;font-weight:700;margin-top:7px}
+.task-project .icon{width:15px;height:15px}
+.task-dialog .dialog-body{padding:16px 21px 20px;overflow-y:auto;overscroll-behavior:contain;background:var(--background);min-height:0}
+.task-path{
+  list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;
+  padding:5px;margin:0 0 14px;border:1px solid var(--line);border-radius:14px;background:#e8edf4
+}
+.task-path li{min-width:0;display:flex;align-items:center;justify-content:center;gap:7px;
+  border-radius:10px;padding:7px 5px;font-size:.85rem;font-weight:750;color:var(--muted);text-align:center}
+.task-path [aria-current=step]{color:var(--ink);background:#fff;box-shadow:0 3px 7px #17203312}
+.task-step-icon{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#dce4ef;flex:none}
+.task-step-icon .icon{width:14px;height:14px}
+.task-path [aria-current=step] .task-step-icon{background:var(--blue)}
+.task-path [data-reached=true] .task-step-icon{background:var(--green)}
+.task-path [aria-current=step] .icon,.task-path [data-reached=true] .icon{filter:invert(1)}
+.task-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);align-items:start;gap:13px}
+.task-sidebar,.task-panel{display:grid;gap:12px;min-width:0}
+.task-panel{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}
+.task-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.task-links,.task-panel .comment{overflow-wrap:anywhere}
+.task-edit-error:empty,#checklist:empty{display:none}
+.task-history summary{display:flex;gap:8px;align-items:center;min-height:26px;cursor:pointer;list-style:none}
+.task-history summary::-webkit-details-marker{display:none}
+.task-history summary strong{margin-right:auto}
+.task-history summary .icon:last-child{transition:rotate .16s}
+.task-history[open] summary .icon:last-child{rotate:180deg}
+.task-history ol{margin-top:12px}
+.task-history li span,.task-history li small,.comment-by small{display:block}
+.comment-by{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.task-footer{flex:none;display:flex;justify-content:space-between;align-items:center;gap:7px;
+  flex-wrap:wrap;padding:10px 21px;border-top:1px solid var(--line);background:#fff}
+.task-feedback{width:100%;color:var(--ink);font-size:.84rem;font-weight:750}
+.task-footer .btn{border-radius:999px}
+@media(max-width:680px){
+  .task-layout{grid-template-columns:1fr}
+  .task-dialog .dialog-head,.task-dialog .dialog-body,.task-footer{padding-inline:12px}
+  .task-path li{flex-direction:column;gap:4px;font-size:.74rem}
+}
 .login{min-height:100vh;display:grid;place-items:center;padding:20px}
 .login-panel{width:min(100%,420px);background:#fff;border:1px solid var(--line);border-radius:16px;padding:25px;display:grid;gap:14px}
 .login-panel .brand{padding:9px 12px;margin-bottom:5px;background:var(--ink);color:#fff;border-radius:12px}

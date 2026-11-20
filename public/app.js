@@ -45,10 +45,13 @@ async function request(path, method = 'GET', data) {
 }
 
 function message(text) {
-  notice.textContent = text;
-  notice.hidden = false;
+  const destination = dialog.open ? dialog.querySelector('.task-feedback') || notice : notice;
+  const other = destination === notice ? dialog.querySelector('.task-feedback') : notice;
+  if (other) other.hidden = true;
+  destination.textContent = text;
+  destination.hidden = false;
   clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => { notice.hidden = true; }, 3600);
+  noticeTimer = setTimeout(() => { destination.hidden = true; }, 3600);
 }
 
 function login() {
@@ -208,12 +211,27 @@ function renderContents() {
   }).join('')}</div>`;
 }
 
-function openDialog(title, html, focusSelector) {
-  if (!dialog.open) restoreFocus = document.activeElement;
-  dialog.innerHTML = `<header class="dialog-head"><h2 id="dialog-title">${title}</h2>${iconButton('Fechar', 'close', 'x')}</header>
-    <div class="dialog-body">${html}</div>`;
-  if (!dialog.open) dialog.showModal();
-  if (focusSelector) dialog.querySelector(focusSelector)?.focus();
+function openDialog(title, html, focusSelector, { details = '', footer = '', origin } = {}) {
+  const opening = !dialog.open;
+  if (opening) restoreFocus = document.activeElement;
+  dialog.classList.toggle('task-dialog', Boolean(details));
+  dialog.innerHTML = `<header class="dialog-head"><div class="dialog-headline">
+    <h2 id="dialog-title" tabindex="-1">${title}</h2>${details}</div>${iconButton('Fechar', 'close', 'x')}</header>
+    <div class="dialog-body">${html}</div>${footer}`;
+  if (opening) {
+    dialog.showModal();
+    if (origin && dialog.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const target = dialog.getBoundingClientRect();
+      const x = origin.left + origin.width / 2 - target.left - target.width / 2;
+      const y = origin.top + origin.height / 2 - target.top - target.height / 2;
+      const scale = Math.max(.86, Math.min(1, origin.width / target.width));
+      dialog.animate([
+        { transform: `translate(${x * .38}px, ${y * .38}px) scale(${scale})`, opacity: .65, borderRadius: '28px' },
+        { transform: 'none', opacity: 1, borderRadius: '20px' }
+      ], { duration: 320, easing: 'cubic-bezier(.16,1,.3,1)' });
+    }
+  }
+  if (focusSelector) dialog.querySelector(focusSelector)?.focus({ preventScroll: focusSelector === '#dialog-title' });
 }
 
 function showNew() {
@@ -237,12 +255,29 @@ function linkify(text) {
     i % 2 ? `<a href="${escape(part)}" target="_blank" rel="noopener noreferrer">${escape(part)}</a>` : escape(part)).join('');
 }
 
-function showCard(card) {
+function showCard(card, origin) {
   if (!card) return;
-  openDialog(escape(card.title), `<form data-form="edit" data-card="${card.id}" data-version="${card.version}">
+  const project = board.projects.find((item) => item.id === card.projectId);
+  const current = Object.keys(stages).indexOf(card.status);
+  const details = `<p class="task-project">${icon('layers-2')} ${escape(project?.name)}
+    ${card.archived ? '<span class="chip">Arquivado</span>' : ''}
+    ${card.blocked ? '<span class="chip warn">Bloqueado</span>' : ''}</p>`;
+  const footer = `<footer class="task-footer"><p class="task-feedback" role="status" hidden></p>
+    ${button('Voltar', 'close', '')}
+    <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar alterações</button></footer>`;
+  openDialog(escape(card.title), `
+    <ol class="task-path" aria-label="Etapa da tarefa">
+      ${Object.entries(stages).map(([key, label], index) => `<li
+        ${index === current ? 'aria-current="step"' : ''} data-reached="${index < current}">
+        <span class="task-step-icon">${icon(index < current ? 'check' : stageIcons[key])}</span><span>${label}</span>
+      </li>`).join('')}
+    </ol>
+    <div class="task-layout">
+    <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
+      <section class="task-panel" aria-labelledby="task-info-title"><h3 id="task-info-title">Detalhes da tarefa</h3>
     ${field('Título', `<input name="title" value="${escape(card.title)}" required maxlength="160">`)}
     ${field('Descrição', `<textarea name="description" maxlength="8000">${escape(card.description)}</textarea>`)}
-    ${/https?:\/\//i.test(card.description) ? `<div class="muted">${linkify(card.description)}</div>` : ''}
+    ${/https?:\/\//i.test(card.description) ? `<div class="task-links muted">${linkify(card.description)}</div>` : ''}
     <div class="row fields">
       ${field('Responsável', `<select name="assigneeId">${memberOptions(card.assigneeId)}</select>`)}
       ${field('Prazo', `<input type="date" name="due" value="${card.due ?? ''}">`)}
@@ -250,26 +285,40 @@ function showCard(card) {
       ${field('Etapa', `<select name="status" ${card.archived ? 'disabled' : ''}>${Object.entries(stages).map(([id, label]) => option(id, label, card.status)).join('')}</select>`)}
     </div>
     ${field('Motivo do bloqueio', `<input name="blocked" value="${escape(card.blocked)}" maxlength="500" placeholder="Deixe vazio se estiver livre">`)}
-    <section class="detail-section">
-      <h3>Checklist</h3><div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
-      <div>${button('Adicionar passo', 'add-check', 'plus')}</div>
     </section>
-    <div class="error" role="alert"></div><div class="row"><button class="btn primary">Salvar alterações</button></div>
+    <section class="task-panel" aria-labelledby="task-check-title">
+      <div class="task-panel-heading"><h3 id="task-check-title">Checklist</h3>${button('Adicionar passo', 'add-check', 'plus')}</div>
+      <div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
+    </section>
+    <div class="error task-edit-error" role="alert"></div>
   </form>
-  <section class="detail-section">
-    <h3>Comentários</h3>
-    ${card.comments.map((item) => `<div class="comment"><strong>${escape(item.actor)}</strong>
-      <small> · ${dateFormat.format(new Date(item.at))}</small><p>${linkify(item.text)}</p></div>`).join('') || '<p class="muted">Nenhum comentário.</p>'}
+  <div class="task-sidebar">
+  <section class="task-panel" aria-labelledby="task-comments-title">
+    <h3 id="task-comments-title">Comentários</h3>
+    <div id="task-comments">${cardActivity(card)}</div>
     <form data-form="comment" data-card="${card.id}" data-version="${card.version}">
       ${field('Escrever comentário', '<textarea name="comment" maxlength="2000" required></textarea>')}
       <div class="error" role="alert"></div><div><button class="btn">Comentar</button></div>
     </form>
   </section>
-  <section class="detail-section">
-    <h3>Histórico</h3><ol class="history">${card.history.slice().reverse().map((entry) =>
-      `<li><strong>${escape(entry.actor)}${entry.source === 'Web' ? '' : ' via ' + escape(entry.source)}</strong>
-      · ${escape(entry.action)} · ${dateFormat.format(new Date(entry.at))}</li>`).join('')}</ol>
-  </section>`);
+  <details class="task-panel task-history">
+    <summary>${icon('history')} <strong>Histórico</strong> ${icon('chevron-down')}</summary>
+    <ol class="history" id="task-history-list">${cardHistory(card)}</ol>
+  </details></div></div>`, '#dialog-title', { details, footer, origin });
+}
+
+function cardActivity(card) {
+  return card.comments.map((item) => `<div class="comment">
+    <div class="comment-by"><span class="avatar" aria-hidden="true">${escape(initialsOf(item.actor))}</span>
+      <div><strong>${escape(item.actor)}</strong><small>${dateFormat.format(new Date(item.at))}</small></div>
+    </div><p>${linkify(item.text)}</p></div>`).join('') || '<p class="muted">Nenhum comentário.</p>';
+}
+
+function cardHistory(card) {
+  return card.history.slice().reverse().map((entry) => `<li>
+    <strong>${escape(entry.actor)}${entry.source === 'Web' ? '' : ' via ' + escape(entry.source)}</strong>
+    <span>${escape(entry.action)}</span><small>${dateFormat.format(new Date(entry.at))}</small>
+  </li>`).join('');
 }
 
 function showAdmin() {
@@ -370,7 +419,7 @@ document.addEventListener('click', async (event) => {
     } else if (action === 'refresh') { await refresh(); message('Quadro atualizado.'); }
     else if (action === 'new') showNew();
     else if (action === 'edit' || action === 'view-block') {
-      showCard(cardById(card));
+      showCard(cardById(card), control.closest('.card')?.getBoundingClientRect());
       if (action === 'view-block') dialog.querySelector('[name=blocked]')?.focus();
     } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
@@ -417,7 +466,8 @@ document.addEventListener('submit', async (event) => {
   if (!kind) return;
   event.preventDefault();
   const errorNode = form.querySelector('.error');
-  const submit = form.querySelector('button:not([type=button])');
+  const submit = event.submitter || (kind === 'edit'
+    ? dialog.querySelector('button[form=task-edit]') : form.querySelector('button:not([type=button])'));
   errorNode.textContent = '';
   submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
@@ -440,8 +490,19 @@ document.addEventListener('submit', async (event) => {
       }
       const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version: Number(form.dataset.version) });
       await refresh();
-      showCard(card);
-      dialog.querySelector(kind === 'comment' ? '[name=comment]' : '[name=title]')?.focus();
+      if (kind === 'comment' && form.isConnected) {
+        dialog.querySelector('#task-comments').innerHTML = cardActivity(card);
+        dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
+        dialog.querySelector('#task-edit').dataset.version = card.version;
+        form.dataset.version = card.version;
+        form.reset();
+        form.querySelector('[name=comment]').focus();
+      } else if (kind === 'edit' && form.isConnected) {
+        const historyOpen = dialog.querySelector('.task-history').open;
+        showCard(card);
+        dialog.querySelector('.task-history').open = historyOpen;
+        dialog.querySelector('button[form=task-edit]')?.focus({ preventScroll: true });
+      }
       message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
     } else if (kind === 'token') {
       const { token } = await request('/tokens', 'POST', data);
