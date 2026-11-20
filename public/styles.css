@@ -69,7 +69,9 @@ nav,.top-actions,.row,.filters,.card-meta,.chips{display:flex;align-items:center
 .nav-btn[data-action=mine]{grid-column:2}
 .nav-btn[data-action=archive]{grid-column:3}
 .top-actions{justify-content:flex-end;flex-wrap:nowrap;gap:2px}
-.account{display:flex;align-items:center;gap:8px;min-width:0;margin-right:6px}
+.account{display:flex;align-items:center;gap:8px;min-width:0;margin-right:4px;padding:3px 12px 3px 3px;border:0;background:transparent;border-radius:var(--radius-pill);transition:background .15s}
+.account:hover{background:var(--hover)}
+.account .face,.account .avatar{width:30px;height:30px}
 .user-name{font-size:.88rem;font-weight:750;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:var(--control-size);padding:0 16px;border-radius:var(--radius-pill);border:1px solid var(--control-line);background:var(--surface);font-weight:750;transition:background .15s,color .15s,box-shadow .15s,translate .15s}
 .btn:hover{background:var(--hover)}
@@ -84,7 +86,8 @@ nav,.top-actions,.row,.filters,.card-meta,.chips{display:flex;align-items:center
 .nav-btn[aria-current=page]:hover{background:transparent}
 .nav-btn[aria-current=page] .icon,.btn.primary .icon{filter:none}
 .tile{min-width:var(--control-size);padding-inline:8px}
-.heading{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 4px 14px;flex-wrap:wrap}
+.heading{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 24px;margin:6px 4px 12px;flex-wrap:wrap}
+.mural-slot:empty{display:none}
 .heading p{margin-top:4px;font-size:.94rem;font-variant-numeric:tabular-nums}
 .filters{margin-bottom:16px;padding:0 2px}
 .search,.project-picker{
@@ -98,6 +101,7 @@ nav,.top-actions,.row,.filters,.card-meta,.chips{display:flex;align-items:center
 .search kbd{font:700 .76rem Manrope,system-ui,sans-serif;color:var(--muted);background:var(--raised);
   border-radius:var(--radius-pill);padding:1px 8px;white-space:nowrap}
 .filters .tile{margin-left:auto}
+.filters .btn.primary{min-height:40px;padding-inline:18px}
 input,select,textarea{min-height:var(--control-size);max-width:100%;padding:8px 12px;border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--well)}
 input,textarea{width:100%}
 textarea{min-height:92px;resize:vertical}
@@ -313,11 +317,10 @@ form,.field,.detail-section{display:grid;gap:10px}
   html:has(.wrap){scroll-padding-bottom:82px}
   .wrap{padding-bottom:92px}
   .wrap~.notice{bottom:82px}
-  .filters{display:grid;grid-template-columns:minmax(0,1fr) auto auto}
-  .filters select{width:100%;max-width:none}
-  .project-picker .icon{display:none}
-  .filters .btn{padding-inline:8px}
-  .filters .tile{grid-column:-2 / -1}
+  .filters{display:flex;flex-wrap:nowrap;gap:8px}
+  .filters .tile{margin-left:auto}
+  .filters .btn{padding-inline:12px}
+  .workspace-nav{background:var(--surface)}
   .search kbd{display:none}
 }
 @media(max-width:410px){
@@ -328,7 +331,6 @@ form,.field,.detail-section{display:grid;gap:10px}
   .top .brand{font-size:.86rem}
   .brand-mark{width:32px;height:32px}
   .top-actions .tile{padding-inline:5px}
-  .filters .project-picker{grid-column:1 / -1}
 }
 .card-flight{position:fixed;inset:0;z-index:5;overflow:hidden;pointer-events:none}
 .flight-hawk,.flight-cargo{position:absolute;inset:0 auto auto 0;will-change:transform}
@@ -349,7 +351,7 @@ html[data-card-transition]::view-transition-new(root){animation:none}
 
 /* Pull-out team profile */
 .profile-dock{
-  --profile-tab:42px;position:fixed;z-index:3;top:clamp(72px,15vh,132px);right:0;
+  --profile-tab:0px;position:fixed;z-index:3;top:72px;right:0;
   display:flex;align-items:flex-start;width:min(322px,100vw);
   transform:translateX(calc(100% - var(--profile-tab) - var(--profile-pull,0px)));
   transition:transform .36s cubic-bezier(.22,.9,.22,1);pointer-events:none
@@ -401,7 +403,8 @@ html[data-card-transition]::view-transition-new(root){animation:none}
   from{clip-path:inset(0 0 0 16%);opacity:.64}
   to{clip-path:inset(0);opacity:1}
 }
-@media(pointer:coarse){.profile-dock{--profile-tab:44px}}
+/* O perfil abre pelo nome no topo; o puxador continua só para o teclado e o leitor de tela. */
+.profile-handle{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);flex:0 0 0;margin:0;padding:0;border:0}
 
 .login-profiles{display:grid;gap:6px}
 .login-choice.btn{justify-content:flex-start;min-height:44px;padding:6px 9px;gap:9px}
@@ -502,4 +505,75 @@ html[data-task-dock] .top{grid-template-columns:minmax(0,1fr) auto;grid-template
 }
 @media(pointer:coarse){
   .task-edit-area,.calendar-day{min-height:40px}
+}
+
+/* ---------- Mural da equipe ---------- */
+.face{
+  display:inline-block;width:24px;height:24px;flex:none;border-radius:50%;
+  background:var(--art) 50% 12% / 470% auto no-repeat,radial-gradient(circle at 50% 30%,#5a4423,var(--accent-soft));
+  box-shadow:0 0 0 1.5px #e9bf6e55
+}
+.mural{display:grid;justify-items:end;gap:2px}
+.mural-row{display:flex;gap:6px;margin:0;padding:0;list-style:none;overflow-x:auto;scrollbar-width:none}
+.mural-row li{animation:figure-in .5s var(--ease) both}
+.mural-row li:nth-child(2){animation-delay:60ms}
+.mural-row li:nth-child(3){animation-delay:120ms}
+.mural-row li:nth-child(4){animation-delay:180ms}
+.mural-row li:nth-child(n+5){animation-delay:240ms}
+/* Avatares da equipe (a política de segurança não aceita estilo no HTML). */
+.face[data-art=felipe]{--art:url('/api/avatar-assets/felipe.png')}
+.face[data-art=bola]{--art:url('/api/avatar-assets/bola.png')}
+.face[data-art=passa-marcha]{--art:url('/api/avatar-assets/passa-marcha.png')}
+.figure{
+  position:relative;display:grid;justify-items:center;gap:2px;width:132px;padding:0 4px 10px;
+  border:0;border-radius:var(--radius-panel);background:transparent;color:var(--ink);
+  transition:background .2s,opacity .25s
+}
+.figure-stage{position:relative;display:block;width:112px;height:118px;overflow:hidden}
+/* O chão: um brilho dourado onde a pessoa pisa. */
+.figure-stage::before{
+  content:"";position:absolute;left:50%;bottom:4px;width:84px;height:16px;translate:-50% 0;border-radius:50%;
+  background:radial-gradient(closest-side,#e9bf6e55,transparent);transition:scale .3s var(--ease),opacity .3s
+}
+.figure-art{
+  position:absolute;left:50%;bottom:-62px;width:168px;max-width:none;height:auto;translate:-50% 0;
+  filter:drop-shadow(0 8px 10px #000a);transition:translate .35s var(--ease)
+}
+.figure-initials{
+  position:absolute;left:50%;bottom:14px;translate:-50% 0;display:grid;place-items:center;width:72px;height:72px;
+  border-radius:50%;background:radial-gradient(circle at 50% 35%,#5a4423,var(--accent-soft));color:var(--accent);
+  font-size:1.6rem;font-weight:850
+}
+.figure-agent{
+  position:absolute;top:6px;right:8px;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;
+  background:var(--raised);box-shadow:0 0 0 2px var(--background),0 0 0 3px #e9bf6e66
+}
+.figure-agent .icon{width:15px;height:15px;filter:invert(.8) sepia(.6) saturate(3) hue-rotate(5deg)}
+.figure-name{font-weight:800;font-size:.92rem;line-height:1.2;text-align:center}
+.figure-load{color:var(--muted);font-size:.8rem;font-variant-numeric:tabular-nums;text-align:center}
+.figure-load b{color:var(--amber);font-weight:800}
+.figure[data-free=true] .figure-load{color:var(--green)}
+.figure:hover{background:#ffffff06}
+@media(hover:hover){
+  .figure:hover .figure-art{translate:-50% -5px}
+  .figure:hover .figure-stage::before{scale:.82;opacity:.7}
+}
+.figure[aria-pressed=true]{background:var(--accent-soft)}
+.figure[aria-pressed=true] .figure-name{color:var(--accent-hover)}
+.figure[aria-pressed=true] .figure-stage::before{background:radial-gradient(closest-side,#e9bf6ecc,transparent);scale:1.15}
+.mural-row:has([aria-pressed=true]) .figure[aria-pressed=false]{opacity:.5}
+.mural-row:has([aria-pressed=true]) .figure[aria-pressed=false]:hover{opacity:.85}
+.mural-note{margin:0 8px;color:var(--muted);font-size:.84rem;text-align:right}
+.mural-note strong{color:var(--ink)}
+.link{border:0;background:none;padding:0;color:var(--accent-hover);font-weight:750;text-decoration:underline;text-underline-offset:3px}
+@keyframes figure-in{from{opacity:0;translate:0 10px}}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.22s}
+@media(max-width:1000px){
+  .mural{justify-items:start;width:100%}
+  .mural-note{text-align:left}
+}
+@media(max-width:710px){
+  .figure{width:104px}
+  .figure-stage{width:92px;height:100px}
+  .figure-art{width:140px;bottom:-52px}
 }

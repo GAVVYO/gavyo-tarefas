@@ -15,6 +15,8 @@ let view = 'board';
 let projectId = '';
 let search = '';
 let blockedOnly = false;
+/** Mural: '' = todos; um id = só os cartões dessa pessoa. */
+let person = '';
 let moved = '';
 let dragged;
 let noticeTimer;
@@ -51,6 +53,14 @@ const iconButton = (label, action, glyph, extra = '') =>
 const brand = '<span class="brand"><span class="brand-mark"><img src="/aguia-dourada.svg" alt=""></span><span class="brand-name">GAVYO <strong>Tarefas</strong></span></span>';
 const initialsOf = (name) => name.trim().split(/\s+/).slice(0, 2)
   .map((part) => Array.from(part)[0]).join('').toUpperCase();
+/** Rosto recortado do avatar da equipe; sem avatar, as iniciais. */
+const face = (member, cls = '') => {
+  const art = member && avatarFor(member.name);
+  return art
+    ? `<span class="face ${cls}" aria-hidden="true" data-art="${art}"></span>`
+    : `<span class="avatar ${cls}" aria-hidden="true">${escape(initialsOf(member?.name || '?'))}</span>`;
+};
+const AGENTS = ['Codex', 'Claude'];
 const stageIcons = { todo: 'circle-dashed', doing: 'loader-circle', done: 'circle-check' };
 const option = (id, label, current) => `<option value="${escape(id)}"${id === current ? ' selected' : ''}>${escape(label)}</option>`;
 const field = (label, html) => `<label class="field">${label}${html}</label>`;
@@ -142,7 +152,7 @@ function renderShell() {
     <div class="brand-island">${brand}</div>
     <label class="search search-island">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"><kbd aria-hidden="true">${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl '}K</kbd></label>
     <div class="top-actions actions-island">
-      <div class="account"><span class="avatar" aria-hidden="true">${escape(initialsOf(board.user.name))}</span><span class="user-name">${escape(board.user.name)}</span></div>
+      <button class="account" type="button" data-action="profile" aria-label="Abrir seu perfil">${face(board.user)}<span class="user-name">${escape(board.user.name)}</span></button>
       ${iconButton('Conectar ao Codex ou Claude', 'connect', 'plug')}
       ${board.user.role === 'admin' ? iconButton('Administrar projetos e equipe', 'admin', 'settings') : ''}
       ${iconButton('Sair', 'logout', 'log-out')}
@@ -160,11 +170,12 @@ function renderShell() {
       : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view])}</h1>
       <p id="scope-summary" class="muted"></p>
     </div>
-    ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
+    <div id="mural-slot" class="mural-slot"></div>
   </section>
   <div class="filters">
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
+    ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
   </div>
   <div id="content"></div>
   <div class="profile-dock" data-open="false">
@@ -221,7 +232,6 @@ function nextCardAction(card) {
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
   const name = assignee?.name || 'Sem responsável';
-  const initials = initialsOf(name);
   const overdue = card.due && card.due < today() && card.status !== 'done';
   const due = card.due?.split('-').reverse().join('/');
   const urgent = card.priority === 'alta';
@@ -246,7 +256,7 @@ function cardTemplate(card) {
     ${card.blocked ? `<p class="card-block-reason">${escape(card.blocked)}</p>` : ''}
     <div class="card-bottom">
       <div class="card-meta">
-        <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
+        <span class="row">${assignee ? face(assignee) : icon('user-round')}${escape(name)}</span>
         <span class="card-signals">
           ${due ? `<span class="signal ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasado · ' : ''}<time datetime="${card.due}" title="${due}">${card.due.startsWith(today().slice(0, 4)) ? due.slice(0, 5) : due}</time></span>` : ''}
           ${card.checklist.length ? `<span class="signal" aria-label="${checks} de ${card.checklist.length} passos concluídos">${icon('list-checks')} ${checks}/${card.checklist.length}</span>` : ''}
@@ -258,6 +268,45 @@ function cardTemplate(card) {
   </article>`;
 }
 
+/**
+ * Mural da equipe: cada pessoa em pé, com o que está fazendo e o que travou
+ * neste projeto, e o selo do assistente (Codex/Claude) quando ele agiu pela
+ * pessoa nas últimas 24 h. Tocar na pessoa mostra só os cartões dela.
+ */
+function muralTemplate(scoped) {
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const people = [...board.members].sort((a, b) =>
+    (a.id === board.user.id ? -1 : b.id === board.user.id ? 1 : a.name.localeCompare(b.name, 'pt-BR')));
+  const figures = people.map((member) => {
+    const mine = scoped.filter((card) => card.assigneeId === member.id);
+    const doing = mine.filter((card) => card.status === 'doing').length;
+    const todo = mine.filter((card) => card.status === 'todo').length;
+    const stuck = mine.filter((card) => card.blocked && card.status !== 'done').length;
+    const agentActs = scoped.flatMap((card) => card.history)
+      .filter((event) => event.actor === member.name && AGENTS.includes(event.source) && event.at >= since);
+    const agents = [...new Set(agentActs.map((event) => event.source))];
+    const load = doing ? `${doing} fazendo` : todo ? `${todo} na fila` : 'Livre';
+    const art = avatarFor(member.name);
+    return `<li><button type="button" class="figure" data-action="person" data-person="${member.id}"
+      aria-pressed="${person === member.id}" data-stuck="${stuck > 0}" data-free="${!doing && !todo}">
+      <span class="figure-stage">
+        ${art ? `<img class="figure-art" src="/api/avatar-assets/${art}.png" alt="" loading="lazy" draggable="false">`
+          : `<span class="figure-initials" aria-hidden="true">${escape(initialsOf(member.name))}</span>`}
+        ${agents.length ? `<span class="figure-agent" title="${agents.join(' e ')} trabalhou pela pessoa hoje">${icon('bot')}<span class="sr-only">${agents.join(' e ')} trabalhou hoje</span></span>` : ''}
+      </span>
+      <span class="figure-name">${escape(member.id === board.user.id ? `${member.name} (você)` : member.name)}</span>
+      <span class="figure-load">${load}${stuck ? ` · <b>${stuck} travado${stuck > 1 ? 's' : ''}</b>` : ''}</span>
+    </button></li>`;
+  }).join('');
+  const loose = scoped.filter((card) => !card.assigneeId && card.status !== 'done').length;
+  return `<section class="mural" aria-label="Equipe neste projeto">
+    <ul class="mural-row">${figures}</ul>
+    <p class="mural-note">${person
+      ? `Mostrando só os cartões de <strong>${escape(board.members.find((member) => member.id === person).name)}</strong>. <button type="button" class="link" data-action="person" data-person="">Ver todos</button>`
+      : loose ? `${loose} ${loose === 1 ? 'cartão está' : 'cartões estão'} sem ninguém. Toque numa pessoa para ver só os dela.` : 'Toque numa pessoa para ver só os cartões dela.'}</p>
+  </section>`;
+}
+
 function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
@@ -265,7 +314,9 @@ function renderContents() {
   const scoped = (view === 'archive' ? board.archive : board.cards).filter((card) =>
     (view !== 'board' || card.projectId === projectId) &&
     (view !== 'mine' || card.assigneeId === board.user.id));
+  if (view !== 'board' || !board.members.some((member) => member.id === person)) person = '';
   const cards = scoped.filter((card) =>
+    (!person || card.assigneeId === person) &&
     (view === 'archive' || !blockedOnly || card.blocked) &&
     (!needle || `${card.title} ${card.description}`.toLocaleLowerCase('pt-BR').includes(needle)));
   const countLabel = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
@@ -286,6 +337,8 @@ function renderContents() {
     content.innerHTML = `<div class="cards full-list">${cards.map(cardTemplate).join('') || '<p class="empty">Nenhum cartão arquivado.</p>'}</div>`;
     return;
   }
+  const slot = document.querySelector('#mural-slot');
+  if (slot) slot.innerHTML = view === 'board' ? muralTemplate(scoped) : '';
   content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
     const inStage = cards.filter((card) => card.status === key);
     return `<section class="column" data-status="${key}" aria-label="${label}">
@@ -618,6 +671,14 @@ document.addEventListener('click', async (event) => {
       await login();
     } else if (action === 'change-pin') {
       showChangePin();
+    } else if (action === 'person') {
+      const next = control.dataset.person === person ? '' : control.dataset.person;
+      const swap = () => { person = next; renderContents(); };
+      if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(swap);
+      else swap();
+      root.querySelector(`.figure[data-person="${next || control.dataset.person}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'profile') {
+      root.querySelector('.profile-handle')?.click();
     } else if (['board', 'mine', 'archive'].includes(action)) {
       navigate(action);
     } else if (action === 'filter') {
