@@ -323,23 +323,63 @@ function linkify(text) {
 function showCard(card, origin) {
   if (!card) return;
   const project = board.projects.find((item) => item.id === card.projectId);
-  const current = Object.keys(stages).indexOf(card.status);
+  const assignee = board.members.find((item) => item.id === card.assigneeId);
+  const done = card.checklist.filter((item) => item.done).length;
   const details = `<p class="task-project">${icon('layers-2')} ${escape(project?.name)}
     ${card.archived ? '<span class="chip">Arquivado</span>' : ''}
     ${card.blocked ? '<span class="chip warn">Bloqueado</span>' : ''}</p>`;
-  const footer = `<footer class="task-footer"><p class="task-feedback" role="status" hidden></p>
-    ${button('Voltar', 'close', '')}
-    <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar alterações</button></footer>`;
+  const footer = `<footer class="task-footer">
+    <p class="task-feedback" role="status" hidden></p>
+    <div class="inspector-edit-actions" hidden>
+      ${button('Cancelar', 'task-cancel', '', 'ghost', `data-card="${card.id}"`)}
+      <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar alterações</button>
+    </div>
+  </footer>`;
+  const tabs = [
+    ['summary', 'Resumo', 'layout-list'],
+    ['conversation', 'Conversa', 'message-square'],
+    ['history', 'Histórico', 'history']
+  ];
   openDialog(escape(card.title), `
-    <ol class="task-path" aria-label="Etapa da tarefa">
-      ${Object.entries(stages).map(([key, label], index) => `<li
-        ${index === current ? 'aria-current="step"' : ''} data-reached="${index < current}">
-        <span class="task-step-icon">${icon(index < current ? 'check' : stageIcons[key])}</span><span>${label}</span>
-      </li>`).join('')}
-    </ol>
-    <div class="task-layout">
-    <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
-      <section class="task-panel" aria-labelledby="task-info-title"><h3 id="task-info-title">Detalhes da tarefa</h3>
+    <div class="inspector-overview">
+      <div class="inspector-meta">
+        <span class="inspector-stage" data-status="${card.status}">${icon(stageIcons[card.status])} ${stages[card.status]}</span>
+        <span>${assignee ? `<span class="avatar" aria-hidden="true">${escape(initialsOf(assignee.name))}</span>` : icon('user-round')}
+          ${escape(assignee?.name || 'Sem responsável')}</span>
+        ${card.due ? `<span>${icon('calendar-days')} <time datetime="${card.due}">${card.due.split('-').reverse().join('/')}</time></span>` : ''}
+        ${card.priority !== 'normal' ? `<span>${icon('flag')} Prioridade ${card.priority}</span>` : ''}
+      </div>
+      ${button('Editar', 'task-section', 'pencil', 'inspector-edit', 'data-section="edit"')}
+    </div>
+    <nav class="inspector-nav" aria-label="Seções da ficha">
+      ${tabs.map(([key, label, glyph]) => button(label, 'task-section', glyph, 'ghost',
+        `data-section="${key}" aria-pressed="${key === 'summary'}" aria-controls="task-${key}"`)).join('')}
+    </nav>
+    <section class="inspector-section" id="task-summary" data-task-section="summary">
+      ${card.blocked ? `<div class="inspector-block">${icon('circle-alert')}
+        <div><h3>Bloqueio</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
+      <section class="inspector-description">
+        <h3>Descrição</h3><p class="${card.description ? '' : 'muted'}">${card.description ? linkify(card.description) : 'Sem descrição.'}</p>
+      </section>
+      ${card.checklist.length ? `<section class="inspector-checks">
+        <div class="inspector-progress-label"><h3>Checklist</h3><span>${done}/${card.checklist.length}</span></div>
+        <progress value="${done}" max="${card.checklist.length}" aria-label="Passos concluídos"></progress>
+        <ul>${card.checklist.map((item) => `<li data-done="${item.done}">${icon(item.done ? 'circle-check' : 'circle')}
+          <span>${escape(item.title)}</span><span class="sr-only">${item.done ? 'Concluído' : 'A fazer'}</span></li>`).join('')}</ul>
+      </section>` : ''}
+    </section>
+    <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
+      <div id="task-comments">${cardActivity(card)}</div>
+      <form class="inspector-compose" data-form="comment" data-card="${card.id}" data-version="${card.version}">
+        ${field('Escrever comentário', '<textarea name="comment" maxlength="2000" required></textarea>')}
+        <div class="error" role="alert"></div><div><button class="btn">${icon('send')} Comentar</button></div>
+      </form>
+    </section>
+    <section class="inspector-section" id="task-history" data-task-section="history" hidden>
+      <ol class="history" id="task-history-list">${cardHistory(card)}</ol>
+    </section>
+    <section class="inspector-section" data-task-section="edit" hidden>
+      <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
     ${field('Título', `<input name="title" value="${escape(card.title)}" required maxlength="160">`)}
     ${field('Descrição', `<textarea name="description" maxlength="8000">${escape(card.description)}</textarea>`)}
     ${/https?:\/\//i.test(card.description) ? `<div class="task-links muted">${linkify(card.description)}</div>` : ''}
@@ -350,26 +390,24 @@ function showCard(card, origin) {
       ${field('Etapa', `<select name="status" ${card.archived ? 'disabled' : ''}>${Object.entries(stages).map(([id, label]) => option(id, label, card.status)).join('')}</select>`)}
     </div>
     ${field('Motivo do bloqueio', `<input name="blocked" value="${escape(card.blocked)}" maxlength="500" placeholder="Deixe vazio se estiver livre">`)}
-    </section>
-    <section class="task-panel" aria-labelledby="task-check-title">
+    <section class="inspector-edit-checklist" aria-labelledby="task-check-title">
       <div class="task-panel-heading"><h3 id="task-check-title">Checklist</h3>${button('Adicionar passo', 'add-check', 'plus')}</div>
       <div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
     </section>
     <div class="error task-edit-error" role="alert"></div>
-  </form>
-  <div class="task-sidebar">
-  <section class="task-panel" aria-labelledby="task-comments-title">
-    <h3 id="task-comments-title">Comentários</h3>
-    <div id="task-comments">${cardActivity(card)}</div>
-    <form data-form="comment" data-card="${card.id}" data-version="${card.version}">
-      ${field('Escrever comentário', '<textarea name="comment" maxlength="2000" required></textarea>')}
-      <div class="error" role="alert"></div><div><button class="btn">Comentar</button></div>
-    </form>
-  </section>
-  <details class="task-panel task-history">
-    <summary>${icon('history')} <strong>Histórico</strong> ${icon('chevron-down')}</summary>
-    <ol class="history" id="task-history-list">${cardHistory(card)}</ol>
-  </details></div></div>`, '#dialog-title', { details, footer, origin });
+      </form>
+    </section>`, '#dialog-title', { details, footer, origin });
+}
+
+function setTaskSection(section) {
+  for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== section;
+  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) {
+    control.setAttribute('aria-pressed', String(control.dataset.section === section));
+  }
+  const editing = section === 'edit';
+  dialog.querySelector('.inspector-edit-actions').hidden = !editing;
+  dialog.querySelector('.inspector-edit').hidden = editing;
+  if (editing) dialog.querySelector('#task-edit [name=title]').focus();
 }
 
 function cardActivity(card) {
@@ -497,7 +535,15 @@ document.addEventListener('click', async (event) => {
     else if (action === 'new') showNew();
     else if (action === 'edit' || action === 'view-block') {
       showCard(cardById(card), control.closest('.card')?.getBoundingClientRect());
-      if (action === 'view-block') dialog.querySelector('[name=blocked]')?.focus();
+      if (action === 'view-block') {
+        const block = dialog.querySelector('.inspector-block');
+        block?.setAttribute('tabindex', '-1');
+        block?.focus({ preventScroll: true });
+      }
+    } else if (action === 'task-section') setTaskSection(control.dataset.section);
+    else if (action === 'task-cancel') {
+      showCard(cardById(card));
+      dialog.querySelector('.inspector-edit')?.focus();
     } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
     else if (action === 'connect') await showConnect();
@@ -580,10 +626,8 @@ document.addEventListener('submit', async (event) => {
         form.reset();
         form.querySelector('[name=comment]').focus();
       } else if (kind === 'edit' && form.isConnected) {
-        const historyOpen = dialog.querySelector('.task-history').open;
         showCard(card);
-        dialog.querySelector('.task-history').open = historyOpen;
-        dialog.querySelector('button[form=task-edit]')?.focus({ preventScroll: true });
+        dialog.querySelector('.inspector-edit')?.focus({ preventScroll: true });
       }
       message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
     } else if (kind === 'token') {

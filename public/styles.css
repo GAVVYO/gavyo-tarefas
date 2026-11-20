@@ -173,49 +173,84 @@ form,.field,.detail-section{display:grid;gap:10px}
 .history li+li{margin-top:6px}
 .comment{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .comment p{white-space:pre-wrap}
-/* Task sheet */
-.task-dialog{width:min(95vw,880px);border-radius:var(--radius-panel)}
-.task-dialog[open]{display:flex;flex-direction:column;overflow:hidden;animation:none}
-.task-dialog .dialog-head{flex:none;align-items:flex-start;padding:10px 14px}
-.dialog-headline{min-width:0;overflow-wrap:anywhere}
-.task-dialog #dialog-title{font-size:clamp(1.05rem,2.5vw,1.35rem);line-height:1.2;outline:0}
-.task-project{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:.85rem;font-weight:700;margin-top:7px}
-.task-project .icon{width:15px;height:15px}
-.task-dialog .dialog-body{padding:10px 14px 14px;overflow-y:auto;overscroll-behavior:contain;background:var(--background);min-height:0}
-.task-path{
-  list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;
-  padding:4px;margin:0 0 8px;border:1px solid var(--line);border-radius:var(--radius-panel);background:var(--well)
+/* Task inspector */
+.task-dialog{
+  width:min(calc(100vw - 24px),640px);border-radius:var(--radius-panel);
+  border-top:2px solid var(--accent);background:var(--surface)
 }
-.task-path li{min-width:0;display:flex;align-items:center;justify-content:center;gap:7px;
-  border-radius:var(--radius-control);padding:5px 4px;font-size:.85rem;font-weight:750;color:var(--muted);text-align:center}
-.task-path [aria-current=step]{color:var(--accent-hover);background:var(--raised);box-shadow:0 3px 7px #0005}
-.task-step-icon{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:var(--radius-control);background:var(--hover);flex:none}
-.task-step-icon .icon{width:14px;height:14px}
-.task-path [aria-current=step] .task-step-icon{background:var(--accent)}
-.task-path [data-reached=true] .task-step-icon{background:var(--green)}
-.task-path [aria-current=step] .icon,.task-path [data-reached=true] .icon{filter:none}
-.task-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);align-items:start;gap:9px}
-.task-sidebar,.task-panel{display:grid;gap:8px;min-width:0}
-.task-panel{border:1px solid var(--line);border-radius:var(--radius-panel);background:var(--surface);padding:10px}
-.task-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.task-links,.task-panel .comment{overflow-wrap:anywhere}
-.task-edit-error:empty,#checklist:empty{display:none}
-.task-history summary{display:flex;gap:8px;align-items:center;min-height:26px;cursor:pointer;list-style:none}
-.task-history summary::-webkit-details-marker{display:none}
-.task-history summary strong{margin-right:auto}
-.task-history summary .icon:last-child{transition:rotate .16s}
-.task-history[open] summary .icon:last-child{rotate:180deg}
-.task-history ol{margin-top:12px}
-.task-history li span,.task-history li small,.comment-by small{display:block}
+.task-dialog::backdrop{background:#08070672}
+.task-dialog[open]{display:flex;flex-direction:column;overflow:hidden;animation:none}
+.task-dialog .dialog-head{flex:none;align-items:flex-start;padding:15px 16px 8px;border-bottom:0}
+.dialog-headline{min-width:0;overflow-wrap:anywhere}
+.task-dialog #dialog-title{font-size:clamp(1.16rem,3vw,1.5rem);line-height:1.18;outline:0}
+.task-project{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--muted);font-size:.84rem;font-weight:700;margin-top:5px}
+.task-project .icon{width:14px;height:14px}
+.task-dialog .dialog-body{padding:0;overflow-y:auto;overscroll-behavior:contain;min-height:0}
+.inspector-overview{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:4px 16px 13px}
+.inspector-meta{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;color:var(--muted);min-width:0}
+.inspector-meta>span{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere}
+.inspector-meta .avatar{width:21px;height:21px}
+.inspector-meta .icon{width:14px;height:14px}
+.inspector-meta .inspector-stage{
+  background:var(--hover);color:var(--ink);border:1px solid var(--line);
+  padding:3px 7px;border-radius:4px;font-size:.85rem;font-weight:800
+}
+.inspector-meta .inspector-stage[data-status=doing]{color:var(--accent);background:var(--accent-soft)}
+.inspector-meta .inspector-stage[data-status=done]{color:var(--green);background:var(--green-soft)}
+.inspector-edit{flex:none}
+.inspector-nav{display:flex;align-items:stretch;gap:4px;padding:0 12px;background:var(--well);border-block:1px solid var(--line)}
+.inspector-nav .btn{
+  position:relative;border-radius:0;min-width:0;padding-inline:8px;color:var(--muted);
+  box-shadow:none;font-size:.91rem
+}
+.inspector-nav .btn[aria-pressed=true]{
+  color:var(--accent-hover);background:var(--raised);border-color:transparent;
+  box-shadow:inset 0 -2px var(--accent)
+}
+.inspector-section{padding:15px 16px 17px}
+.inspector-description p{margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.inspector-block{
+  display:flex;align-items:start;gap:8px;margin-bottom:13px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:var(--radius-control);background:var(--amber-soft);color:var(--amber)
+}
+.inspector-block p{white-space:pre-wrap;overflow-wrap:anywhere}
+.inspector-checks{margin-top:17px;border-top:1px solid var(--line);padding-top:11px}
+.inspector-progress-label{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.inspector-progress-label span{color:var(--muted);font-variant-numeric:tabular-nums}
+.inspector-checks progress{
+  width:100%;height:4px;margin:8px 0 3px;border:0;border-radius:4px;
+  appearance:none;background:var(--hover);color:var(--accent)
+}
+.inspector-checks progress::-webkit-progress-bar{background:var(--hover);border-radius:4px}
+.inspector-checks progress::-webkit-progress-value{background:var(--accent);border-radius:4px}
+.inspector-checks progress::-moz-progress-bar{background:var(--accent);border-radius:4px}
+.inspector-checks ul,.inspector-section .history{list-style:none;margin:0;padding:0}
+.inspector-checks li{display:flex;align-items:start;gap:7px;padding:5px 0;overflow-wrap:anywhere}
+.inspector-checks li[data-done=true]{color:var(--muted)}
+.inspector-checks .icon{margin-top:2px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.inspector-compose,.inspector-edit-checklist{margin-top:11px;padding-top:10px;border-top:1px solid var(--line)}
+.inspector-edit-checklist .task-panel-heading{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+#checklist:not(:empty){margin-top:8px}
+.task-links{overflow-wrap:anywhere}
+.task-edit-error:empty{display:none}
+.inspector-section .history li{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:7px 0;
+  border-bottom:1px solid var(--line);overflow-wrap:anywhere
+}
+.inspector-section .history li strong{color:var(--ink)}
+.inspector-section .history li span{grid-column:1}
+.inspector-section .history li small{grid-column:2;grid-row:1 / span 2}
 .comment-by{display:flex;align-items:center;gap:7px;margin-bottom:5px}
-.task-footer{flex:none;display:flex;justify-content:space-between;align-items:center;gap:7px;
-  flex-wrap:wrap;padding:7px 14px;border-top:1px solid var(--line);background:var(--surface)}
-.task-feedback{width:100%;color:var(--ink);font-size:.84rem;font-weight:750}
-.task-footer .btn{border-radius:var(--radius-control)}
-@media(max-width:680px){
-  .task-layout{grid-template-columns:1fr}
-  .task-dialog .dialog-head,.task-dialog .dialog-body,.task-footer{padding-inline:12px}
-  .task-path li{flex-direction:column;gap:4px;font-size:.74rem}
+.comment-by small{display:block}
+.task-footer{flex:none;padding:7px 16px;border-top:1px solid var(--line);background:var(--well)}
+.task-footer:not(:has(:not([hidden]):is(.task-feedback,.inspector-edit-actions))){display:none}
+.task-feedback{color:var(--ink);font-size:.84rem;font-weight:750;margin:4px 0}
+.inspector-edit-actions{display:flex;justify-content:flex-end;gap:7px}
+@media(max-width:390px){
+  .task-dialog .dialog-head,.inspector-overview,.inspector-section,.task-footer{padding-inline:11px}
+  .inspector-nav{padding-inline:6px;gap:1px}
+  .inspector-nav .btn{padding-inline:7px}
 }
 .login{min-height:100vh;display:grid;place-items:center;padding:20px}
 .login-panel{width:min(100%,420px);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-panel);padding:18px;display:grid;gap:10px}
