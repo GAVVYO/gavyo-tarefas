@@ -21,7 +21,7 @@ const button = (label, action, glyph, cls = '', extra = '') =>
   `<button class="btn ${cls}" type="button" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`;
 const iconButton = (label, action, glyph, extra = '') =>
   button('', action, glyph, 'ghost tile', `aria-label="${label}" title="${label}" ${extra}`);
-const brand = '<span class="brand"><span class="brand-mark"><img src="/aguia.png" alt=""></span><span>GAVYO <strong>Tarefas</strong></span></span>';
+const brand = '<span class="brand"><span class="brand-mark"><img src="/aguia-dourada.svg" alt=""></span><span class="brand-name">GAVYO <strong>Tarefas</strong></span></span>';
 const initialsOf = (name) => name.trim().split(/\s+/).slice(0, 2)
   .map((part) => Array.from(part)[0]).join('').toUpperCase();
 const stageIcons = { todo: 'circle-dashed', doing: 'loader-circle', done: 'circle-check' };
