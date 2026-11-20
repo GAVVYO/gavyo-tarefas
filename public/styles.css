@@ -176,9 +176,8 @@ form,.field,.detail-section{display:grid;gap:10px}
 /* Task inspector */
 .task-dialog{
   width:min(calc(100vw - 24px),640px);border-radius:var(--radius-panel);
-  border-top:2px solid var(--accent);background:var(--surface)
+  background:var(--surface)
 }
-.task-dialog::backdrop{background:#08070672}
 .task-dialog[open]{display:flex;flex-direction:column;overflow:hidden;animation:none}
 .task-dialog .dialog-head{flex:none;align-items:flex-start;padding:15px 16px 8px;border-bottom:0}
 .dialog-headline{min-width:0;overflow-wrap:anywhere}
@@ -402,3 +401,96 @@ html[data-card-transition]::view-transition-new(root){animation:none}
 .login-person .avatar{width:32px;height:32px}
 .pin-input{min-height:44px;font-size:1.12rem;letter-spacing:.35em;font-variant-numeric:tabular-nums}
 .profile-info .profile-pin{margin-top:9px}
+
+/* Movable task window and field editor */
+.task-dialog{
+  position:fixed;inset:auto;top:max(12px,9vh);left:max(12px,calc((100vw - 680px)/2));
+  z-index:6;width:min(680px,calc(100vw - 24px));max-width:calc(100vw - 24px);
+  max-height:calc(100dvh - 24px);margin:0;border:1px solid var(--control-line);
+  box-shadow:0 12px 56px #000a;transform-origin:top left
+}
+.task-dialog[data-magnet]{outline:2px solid var(--accent);outline-offset:3px}
+.task-window-tools,.task-edit-area{display:flex;align-items:center;gap:5px}
+.task-window-tools{flex:none;margin-left:auto}
+.task-dialog .dialog-headline{flex:1}
+.task-dialog[data-dock] .dialog-body{flex:1}
+.task-grip{display:grid;place-items:center;color:var(--muted);height:30px;width:23px;flex:none}
+.task-grip .icon{width:19px;height:19px}
+.task-glyph.icon{filter:none;color:inherit}
+.task-edit-area{
+  justify-content:flex-start;background:transparent;border:1px solid transparent;border-radius:5px;
+  color:inherit;min-height:28px;padding:2px 5px;text-align:left;font-weight:inherit;max-width:100%
+}
+.task-edit-area:hover,.task-edit-area:focus-visible{background:var(--hover);border-color:var(--line);color:var(--accent)}
+.task-heading-edit{font-size:inherit;margin:-2px -4px;font-weight:800;overflow-wrap:anywhere}
+.task-heading-edit .icon{color:var(--accent)}
+.inspector-meta{gap:3px 5px}
+.inspector-meta .task-edit-area{color:var(--muted)}
+.inspector-meta .task-edit-area:hover{color:var(--accent)}
+.inspector-overview .inspector-stage{border-color:var(--line);color:var(--accent)}
+.task-dialog[data-editing=true] .inspector-overview{display:none}
+.task-resize{
+  position:absolute;right:0;bottom:0;display:grid;place-items:center;width:24px;height:23px;
+  padding:0;border:0;border-radius:4px;background:var(--raised);color:var(--muted);cursor:nwse-resize;touch-action:none
+}
+.task-dialog[data-dock=right] .task-resize{left:0;right:auto;cursor:nesw-resize}
+.task-dialog[data-dock=right] .task-resize .icon{scale:-1 1}
+.task-drag{cursor:grab;touch-action:none;user-select:none}
+.task-drag:active{cursor:grabbing}
+.task-snap-hawk{
+  position:absolute;inset:6px 52px auto auto;width:48px;height:34px;pointer-events:none;
+  background:url('/aguia-dourada.svg') center/contain no-repeat;opacity:0
+}
+.task-dialog .task-footer{padding-right:28px}
+.task-dialog[data-dock=right] .task-footer{padding-left:28px}
+html[data-task-dock=left] .wrap{padding-left:calc(var(--task-dock-size) + 12px)}
+html[data-task-dock=right] .wrap{padding-right:calc(var(--task-dock-size) + 12px)}
+html[data-task-dock] .top{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"brand actions" "search search" "nav nav"}
+@media(max-width:1099px){html[data-task-dock] .board{grid-template-columns:1fr}}
+.inspector-description{position:relative}
+.inspector-description button::after{content:"";position:absolute;inset:0}
+.inspector-description a{position:relative;z-index:1}
+.editor-steps{
+  display:flex;gap:4px;padding-bottom:7px;border-bottom:1px solid var(--line);
+  overflow:auto;flex-wrap:nowrap;scrollbar-width:thin
+}
+.editor-steps .btn{white-space:nowrap;flex-shrink:0;font-size:.84rem}
+.editor-steps .btn[aria-pressed=true]{color:var(--accent);background:var(--accent-soft)}
+.editor-step{display:grid;gap:10px;padding:12px 2px 4px}
+.editor-step-title{display:flex;align-items:center;gap:8px;font-size:1.06rem}
+.editor-step-title .icon{color:var(--accent)}
+.editor-step>.field{max-width:100%}
+.editor-step .task-title-input{
+  border:0;border-bottom:1px solid var(--accent);border-radius:0;
+  font-size:clamp(1.32rem,4vw,1.95rem);font-weight:750;padding:8px 4px;background:transparent
+}
+.editor-step .task-writing{min-height:clamp(150px,31vh,300px);background:var(--well);padding:10px 11px;line-height:1.55}
+.task-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(135px,100%),1fr));gap:7px}
+.task-option{position:relative}
+.task-option input{position:absolute;width:1px;height:1px;min-height:0;padding:0;opacity:0;overflow:hidden}
+.task-option>span{
+  display:flex;align-items:center;gap:8px;min-height:48px;padding:7px 8px;cursor:pointer;
+  border:1px solid var(--line);border-radius:6px;background:var(--well);overflow-wrap:anywhere
+}
+.task-option input:checked+span{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-hover)}
+.task-option input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.editor-avatar{width:34px;height:34px;object-fit:cover;object-position:50% 12%;background:var(--hover);border-radius:5px;flex:none}
+.task-calendar{width:min(100%,355px)}
+.calendar-month,.calendar-grid{display:grid;gap:4px}
+.calendar-month{grid-template-columns:auto 1fr auto;align-items:center;text-align:center;margin-bottom:7px}
+.calendar-month strong{text-transform:capitalize}
+.calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr));text-align:center}
+.calendar-weekday{font-size:.79rem;color:var(--muted)}
+.calendar-day{min-height:34px;padding:1px;border:1px solid var(--line);border-radius:4px;background:var(--well)}
+.calendar-day:hover,.calendar-day[aria-current=date]{border-color:var(--accent)}
+.calendar-day[aria-pressed=true]{background:var(--accent);color:var(--accent-text);font-weight:850}
+.editor-step>[data-action=task-clear-day],.editor-step>[data-action=add-check]{justify-self:start}
+@media(max-width:839px){
+  .task-drag{cursor:auto;touch-action:auto;user-select:auto}
+  .task-dock-control,.task-resize,.task-grip{display:none}
+  .task-dialog .task-footer{padding-right:11px}
+  .inspector-edit-actions{flex-wrap:wrap}
+}
+@media(pointer:coarse){
+  .task-edit-area,.calendar-day{min-height:40px}
+}
