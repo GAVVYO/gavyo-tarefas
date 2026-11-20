@@ -172,3 +172,38 @@ test('prints do cartão: só imagem de verdade, só para quem entrou, e somem do
   assert.equal((await removed.json()).attachments.length, 0);
   assert.deepEqual(await readdir(join(uploads, card.id)), []);
 });
+
+test('fundo do quadro: cada pessoa escolhe o seu e só ela vê a própria imagem', async (t) => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { uploads: await mkdtemp(join(tmpdir(), 'gavyo-fundos-')) }).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const enter = async (name) => {
+    const member = await store.createMember({ name });
+    const r = await fetch(origin + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' }) });
+    return r.headers.get('set-cookie').split(';')[0];
+  };
+  const felipe = await enter('Felipe');
+  const bola = await enter('Bola');
+  const put = (cookie, background) => fetch(origin + '/api/preferences', { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ background }) });
+  assert.equal((await (await fetch(origin + '/api/board', { headers: { cookie: felipe } })).json()).preferences.background, 'noite');
+  assert.equal((await put(felipe, 'couro')).status, 200);
+  assert.equal((await put(felipe, 'imagem')).status, 400);
+  assert.equal((await put(felipe, 'neon')).status, 400);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const sent = await fetch(origin + '/api/preferences/background', { method: 'POST', headers: { cookie: felipe, 'content-type': 'image/png' }, body: png });
+  assert.equal(sent.status, 201);
+  const prefs = await sent.json();
+  assert.equal(prefs.background, 'imagem');
+  assert.equal((await fetch(`${origin}/api/backgrounds/${prefs.backgroundFile}`, { headers: { cookie: felipe } })).status, 200);
+  assert.equal((await fetch(`${origin}/api/backgrounds/${prefs.backgroundFile}`, { headers: { cookie: bola } })).status, 404);
+  assert.equal((await (await fetch(origin + '/api/board', { headers: { cookie: bola } })).json()).preferences.background, 'noite');
+});

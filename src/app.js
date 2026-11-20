@@ -61,7 +61,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     // Imagens só na rota de anexos; um formulário de outro site não consegue mandar esse tipo sem pedir licença ao servidor.
-    const image = req.method === 'POST' && /^\/cards\/[^/]+\/attachments$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
+    const image = req.method === 'POST' && /^\/(cards\/[^/]+\/attachments|preferences\/background)$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
     if (req.method !== 'GET' && ((!req.is('application/json') && !image) ||
       (req.get('origin') && req.get('origin') !== (origin || `${req.protocol}://${req.get('host')}`)))) {
       throw new AppError(403, 'Origem da solicitação inválida.');
@@ -108,7 +108,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     const [projects, members, cards, archive] = await Promise.all([
       store.projects(), store.members(), store.listCards(), store.listCards({ archived: true })
     ]);
-    res.json({ user: req.actor, projects, members, cards, archive });
+    res.json({ user: req.actor, projects, members, cards, archive, preferences: await store.preferences(req.actor.id) });
   });
   app.post('/api/cards', async (req, res) => res.status(201).json(await store.createCard(req.body, req.actor)));
   app.patch('/api/cards/:id', async (req, res) => {
@@ -146,6 +146,32 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     const bytes = await readFile(join(uploadRoot, id, name)).catch(() => null);
     if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
     res.set({ 'Content-Type': attachment.type, 'Cache-Control': 'private, max-age=31536000, immutable' }).send(bytes);
+  });
+
+  app.put('/api/preferences', async (req, res) => {
+    const input = z.object({ background: z.enum(['noite', 'couro', 'asfalto', 'entardecer', 'imagem']) }).parse(req.body);
+    res.json((await store.setPreferences(req.actor.id, input)).saved);
+  });
+  /** Foto de fundo da própria pessoa: substitui a anterior e apaga o arquivo velho. */
+  app.post('/api/preferences/background', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
+    const type = IMAGE_TYPES[req.get('content-type')];
+    if (!type || !Buffer.isBuffer(req.body) || !req.body.length || !type.magic(req.body)) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF.');
+    const name = `${crypto.randomUUID()}.${type.ext}`;
+    const dir = join(uploadRoot, 'fundos', req.actor.id);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(join(dir, name), req.body, { mode: 0o600 });
+    const { previous, saved } = await store.setPreferences(req.actor.id, { background: 'imagem', backgroundFile: name });
+    if (previous.backgroundFile && previous.backgroundFile !== name) await unlink(join(dir, previous.backgroundFile)).catch(() => {});
+    res.status(201).json(saved);
+  });
+  app.get('/api/backgrounds/:name', async (req, res) => {
+    const name = z.string().regex(/^[0-9a-f-]{36}\.(png|jpg|webp|gif)$/).parse(req.params.name);
+    if ((await store.preferences(req.actor.id)).backgroundFile !== name) throw new AppError(404, 'Imagem não encontrada.');
+    const bytes = await readFile(join(uploadRoot, 'fundos', req.actor.id, name)).catch(() => null);
+    if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
+    const ext = name.split('.').pop();
+    const mime = Object.entries(IMAGE_TYPES).find(([, value]) => value.ext === ext)[0];
+    res.set({ 'Content-Type': mime, 'Cache-Control': 'private, max-age=31536000, immutable' }).send(bytes);
   });
 
   function admin(req, _res, next) {

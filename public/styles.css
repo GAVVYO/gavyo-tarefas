@@ -782,3 +782,58 @@ html[data-task-dock] .top{grid-template-columns:minmax(0,1fr) auto;grid-template
   .viewer-nav{top:auto;bottom:130px;translate:none}
   .prints{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* ---------- Fundo do quadro (cada pessoa escolhe o seu) ---------- */
+:root{
+  --paint-noite:#0f0d0b;
+  --paint-couro:
+    radial-gradient(120% 80% at 15% -10%,#4a2f16 0%,transparent 55%),
+    radial-gradient(90% 70% at 105% 110%,#3a2410 0%,transparent 60%),
+    repeating-radial-gradient(circle at 30% 40%,#ffffff06 0 1px,transparent 1px 4px),
+    #1b130b;
+  --paint-asfalto:
+    radial-gradient(#ffffff0a 1px,transparent 1.2px) 0 0/7px 7px,
+    radial-gradient(#00000055 1px,transparent 1.4px) 3px 4px/9px 9px,
+    radial-gradient(120% 70% at 50% -20%,#2e2b27,#131210 70%);
+  --paint-entardecer:
+    radial-gradient(90% 60% at 78% -12%,#8a5a16 0%,#4a2e0b 32%,transparent 66%),
+    radial-gradient(60% 40% at 10% 0%,#3a2108 0%,transparent 70%),
+    linear-gradient(180deg,#1d140a,#0f0d0b 62%);
+  --paint-imagem:linear-gradient(#0f0d0bb3,#0f0d0bf0 55%),var(--bg-image,none) center/cover no-repeat,#0f0d0b;
+}
+:root{background:var(--paint-noite) fixed;min-height:100%}
+body{min-height:100dvh}
+body{background:transparent}
+html[data-bg=couro]{background:var(--paint-couro) fixed}
+html[data-bg=asfalto]{background:var(--paint-asfalto) fixed}
+html[data-bg=entardecer]{background:var(--paint-entardecer) fixed}
+html[data-bg=imagem]{background:var(--paint-imagem) fixed}
+/* Sobre um fundo com desenho, as colunas ganham um vidro escuro para o texto continuar firme. */
+html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill) 88%,transparent);backdrop-filter:blur(10px)}
+.bg-picker{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.bg-picker h3{font-size:.9rem;margin-bottom:8px}
+.bg-swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
+.bg-swatch{
+  display:grid;gap:5px;justify-items:center;padding:0 0 4px;border:0;background:transparent;color:var(--muted);
+  font-size:.74rem;font-weight:750;border-radius:14px
+}
+.bg-paint{
+  display:block;width:100%;aspect-ratio:1;border-radius:12px;box-shadow:inset 0 0 0 1px #ffffff14;
+  transition:box-shadow .2s,scale .2s var(--ease)
+}
+.bg-swatch[data-bg=noite] .bg-paint{background:var(--paint-noite)}
+.bg-swatch[data-bg=couro] .bg-paint{background:var(--paint-couro)}
+.bg-swatch[data-bg=asfalto] .bg-paint{background:var(--paint-asfalto)}
+.bg-swatch[data-bg=entardecer] .bg-paint{background:var(--paint-entardecer)}
+.bg-paint.is-photo{background:var(--bg-image,none) center/cover,#0f0d0b}
+.bg-swatch:hover .bg-paint{scale:1.05}
+.bg-swatch[aria-pressed=true]{color:var(--accent-hover)}
+.bg-swatch[aria-pressed=true] .bg-paint{box-shadow:inset 0 0 0 1px #ffffff14,0 0 0 2px var(--surface),0 0 0 4px var(--accent)}
+.bg-upload{
+  display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;border-radius:var(--radius-pill);
+  border:1.5px dashed var(--control-line);color:var(--ink);font-size:.84rem;font-weight:700;cursor:pointer
+}
+.bg-upload:hover{border-color:var(--accent);background:var(--accent-soft)}
+.bg-upload:focus-within{outline:3px solid var(--accent);outline-offset:2px}
+.bg-upload .icon{width:16px;height:16px}
+.profile-panel{max-height:calc(100dvh - 90px);overflow-y:auto}

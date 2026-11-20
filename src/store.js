@@ -230,5 +230,26 @@ export function createStore({ query }) {
     return card?.attachments?.find((item) => item.file === name) || null;
   }
 
-  return { createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard, addAttachment, removeAttachment, cardFile };
+  /** Fundos prontos; "imagem" usa a foto que a pessoa enviou. */
+  const BACKGROUNDS = ['noite', 'couro', 'asfalto', 'entardecer', 'imagem'];
+  async function preferences(id) {
+    const row = await first('SELECT data FROM preferences WHERE member_id = ?', [id]);
+    return { background: 'noite', backgroundFile: null, ...(row ? JSON.parse(row.data) : {}) };
+  }
+  async function setPreferences(id, input) {
+    const current = await preferences(id);
+    const next = { ...current };
+    if (input.background !== undefined) {
+      if (!BACKGROUNDS.includes(input.background)) throw new AppError(400, 'Fundo desconhecido.');
+      if (input.background === 'imagem' && !(input.backgroundFile ?? current.backgroundFile)) throw new AppError(400, 'Envie uma imagem primeiro.');
+      next.background = input.background;
+    }
+    if (input.backgroundFile !== undefined) next.backgroundFile = input.backgroundFile;
+    const data = JSON.stringify(next);
+    const updated = await query('UPDATE preferences SET data = ? WHERE member_id = ?', [data, id]);
+    if (!updated.affectedRows) await query('INSERT INTO preferences (member_id, data) VALUES (?, ?)', [id, data]);
+    return { previous: current, saved: next };
+  }
+
+  return { preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

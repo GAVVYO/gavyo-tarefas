@@ -137,8 +137,34 @@ function showChangePin() {
   </form>`, '[name=currentPin]');
 }
 
+/** Fundo do quadro de cada pessoa (a foto entra pelo CSSOM: a política de segurança não aceita estilo no HTML). */
+const BACKGROUNDS = [['noite', 'Noite'], ['couro', 'Couro'], ['asfalto', 'Asfalto'], ['entardecer', 'Entardecer']];
+function applyBackground(prefs) {
+  const html = document.documentElement;
+  html.dataset.bg = prefs?.background || 'noite';
+  if (prefs?.backgroundFile) html.style.setProperty('--bg-image', `url('/api/backgrounds/${prefs.backgroundFile}')`);
+  else html.style.removeProperty('--bg-image');
+}
+
+function backgroundPicker() {
+  const prefs = board.preferences || {};
+  const current = prefs.background || 'noite';
+  return `<div class="bg-picker">
+    <h3 id="bg-title">Fundo do quadro</h3>
+    <div class="bg-swatches" role="group" aria-labelledby="bg-title">
+      ${BACKGROUNDS.map(([key, label]) => `<button type="button" class="bg-swatch" data-action="set-bg" data-bg="${key}" aria-pressed="${current === key}">
+        <span class="bg-paint" aria-hidden="true"></span><span>${label}</span></button>`).join('')}
+      ${prefs.backgroundFile ? `<button type="button" class="bg-swatch" data-action="set-bg" data-bg="imagem" aria-pressed="${current === 'imagem'}">
+        <span class="bg-paint is-photo" aria-hidden="true"></span><span>Sua imagem</span></button>` : ''}
+    </div>
+    <label class="bg-upload">${icon('image-plus')}<span>${prefs.backgroundFile ? 'Trocar sua imagem' : 'Usar uma imagem sua'}</span>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only" data-bg-upload></label>
+  </div>`;
+}
+
 async function refresh({ shell = false } = {}) {
   board = await request('/board');
+  applyBackground(board.preferences);
   projectId = board.projects.some((project) => project.id === projectId) ? projectId : board.projects[0]?.id || '';
   if (shell) renderShell();
   else renderContents();
@@ -190,6 +216,7 @@ function renderShell() {
         <h2 id="profile-name">${escape(board.user.name)}</h2>
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
         ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
+        <div id="bg-slot">${backgroundPicker()}</div>
       </div>
     </aside>
   </div>`;
@@ -838,7 +865,21 @@ dialog.addEventListener('drop', (event) => {
   delete dialog.querySelector('.print-add')?.dataset.over;
   void uploadPrints(zone.dataset.upload, event.dataTransfer.files);
 });
-document.addEventListener('change', (event) => {
+document.addEventListener('change', async (event) => {
+  const bgInput = event.target.closest?.('[data-bg-upload]');
+  if (bgInput?.files?.[0]) {
+    try {
+      const body = await shrinkImage(bgInput.files[0]);
+      const response = await fetch('/api/preferences/background', { method: 'POST', headers: { 'content-type': body.type || bgInput.files[0].type }, body });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Não deu para usar essa imagem.');
+      board.preferences = data;
+      applyBackground(data);
+      root.querySelector('#bg-slot').innerHTML = backgroundPicker();
+      message('Fundo trocado. Só você vê.');
+    } catch (error) { message(error.message); }
+    return;
+  }
   const input = event.target.closest?.('[data-upload]');
   if (!input?.files?.length) return;
   void uploadPrints(input.dataset.upload, input.files).finally(() => { input.value = ''; });
@@ -917,6 +958,11 @@ document.addEventListener('click', async (event) => {
       await placeCard(card, status);
       if (fromTask) showCard(cardById(card));
       else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'set-bg') {
+      board.preferences = await request('/preferences', 'PUT', { background: control.dataset.bg });
+      applyBackground(board.preferences);
+      root.querySelector('#bg-slot').innerHTML = backgroundPicker();
+      root.querySelector(`.bg-swatch[data-bg="${control.dataset.bg}"]`)?.focus();
     } else if (action === 'view-print') {
       viewPrint(card, Number(control.dataset.index));
     } else if (action === 'close-viewer') {
@@ -955,6 +1001,7 @@ document.addEventListener('click', async (event) => {
     } else if (action === 'logout') {
       await request('/logout', 'POST', {});
       board = null; view = 'board'; projectId = ''; search = ''; blockedOnly = false;
+      applyBackground(null);
       login();
     }
   } catch (error) {
