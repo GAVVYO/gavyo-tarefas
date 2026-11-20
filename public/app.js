@@ -121,6 +121,16 @@ function navigate(nextView) {
   root.querySelector('[aria-current=page]')?.focus({ preventScroll: true });
 }
 
+function nextCardAction(card) {
+  const target = `data-card="${card.id}"`;
+  if (card.archived) return button('Restaurar', 'restore', 'archive-restore', 'card-action', target);
+  if (card.status === 'done') return button('Arquivar', 'archive-card', 'archive', 'card-action', target);
+  if (card.blocked) return button('Ver bloqueio', 'view-block', 'circle-alert', 'card-action attention', target);
+  const start = card.status === 'todo';
+  return button(start ? 'Começar' : 'Concluir', 'move', start ? 'play' : 'check',
+    'card-action primary', `${target} data-status="${start ? 'doing' : 'done'}"`);
+}
+
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
   const name = assignee?.name || 'Sem responsável';
@@ -137,15 +147,16 @@ function cardTemplate(card) {
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-priority="${card.priority}" ${card.archived ? '' : 'draggable="true"'}>
     <div class="card-top">
-      <button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button>
+      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button></h3>
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
     </div>
     ${card.description ? `<p>${escape(card.description.slice(0, 130))}${card.description.length > 130 ? '…' : ''}</p>` : ''}
     <div class="chips">
       ${view !== 'board' ? `<span class="chip">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
-      ${card.blocked ? `<span class="chip warn" title="${escape(card.blocked)}">${icon('circle-alert')} Bloqueado</span>` : ''}
+      ${card.blocked ? `<span class="chip warn">${icon('circle-alert')} Bloqueado</span>` : ''}
       ${card.priority !== 'normal' ? `<span class="chip ${urgent ? 'priority-high' : ''}">${icon(urgent ? 'flag' : 'arrow-down')} Prioridade ${card.priority}</span>` : ''}
     </div>
+    ${card.blocked ? `<p class="card-block-reason">${escape(card.blocked)}</p>` : ''}
     <div class="card-meta">
       <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
       <span class="card-signals">
@@ -154,6 +165,7 @@ function cardTemplate(card) {
         ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')} ${card.comments.length}</span>` : ''}
       </span>
     </div>
+    <div class="card-footer">${nextCardAction(card)}</div>
   </article>`;
 }
 
@@ -314,19 +326,24 @@ async function placeCard(id, status, byDrag = false) {
     renderContents();
     moved = '';
   };
-  if (!byDrag && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  const html = document.documentElement;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!byDrag && !reduce && document.startViewTransition && !html.hasAttribute('data-card-transition')) {
     const old = document.querySelector(`[data-id="${id}"]`);
-    if (old) old.style.viewTransitionName = 'moving-card';
-    const transition = document.startViewTransition(() => {
-      paint();
-      const updated = document.querySelector(`[data-id="${id}"]`);
-      if (updated) updated.style.viewTransitionName = 'moving-card';
-    });
-    void transition.finished.catch(() => {}).finally(() => {
-      const current = document.querySelector(`[data-id="${id}"]`);
-      if (current) current.style.removeProperty('view-transition-name');
-    });
-    await transition.updateCallbackDone;
+    if (old) {
+      html.setAttribute('data-card-transition', '');
+      old.classList.add('card-transition');
+      const transition = document.startViewTransition(() => {
+        paint();
+        document.querySelector(`[data-id="${id}"]`)?.classList.add('card-transition');
+      });
+      const cleanup = () => {
+        html.removeAttribute('data-card-transition');
+        root.querySelector('.card-transition')?.classList.remove('card-transition');
+      };
+      void transition.finished.then(cleanup, cleanup);
+      await transition.updateCallbackDone;
+    } else paint();
   } else paint();
   message(`Cartão movido para ${stages[status]}.`);
 }
@@ -352,8 +369,10 @@ document.addEventListener('click', async (event) => {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
     } else if (action === 'refresh') { await refresh(); message('Quadro atualizado.'); }
     else if (action === 'new') showNew();
-    else if (action === 'edit') showCard(cardById(card));
-    else if (action === 'close') dialog.close();
+    else if (action === 'edit' || action === 'view-block') {
+      showCard(cardById(card));
+      if (action === 'view-block') dialog.querySelector('[name=blocked]')?.focus();
+    } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
     else if (action === 'connect') await showConnect();
     else if (action === 'revoke-token') {
@@ -362,7 +381,9 @@ document.addEventListener('click', async (event) => {
       message('Token revogado.');
     }
     else if (action === 'move') {
-      control.closest('details').open = false;
+      const menu = control.closest('details');
+      if (menu) menu.open = false;
+      control.disabled = true;
       await placeCard(card, status);
       root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
     } else if (action === 'archive-card' || action === 'restore') {
@@ -385,6 +406,8 @@ document.addEventListener('click', async (event) => {
     message(error.message);
     if (error.status === 401) { dialog.close(); login(); }
     if (error.status === 409) await refresh().catch(() => {});
+  } finally {
+    if (action === 'move') control.disabled = false;
   }
 });
 
