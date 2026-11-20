@@ -71,18 +71,20 @@ async function refresh({ shell = false } = {}) {
 function renderShell() {
   root.className = 'wrap';
   root.innerHTML = `<header class="top">
-    ${brand}
-    <nav class="workspace-nav" aria-label="Área de trabalho">
-      ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
-      ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
-      ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
-    </nav>
-    <div class="top-actions">
+    <div class="brand-island">${brand}</div>
+    <label class="search search-island">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"><kbd aria-hidden="true">${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl '}K</kbd></label>
+    <div class="top-actions actions-island">
       <div class="account"><span class="avatar" aria-hidden="true">${escape(initialsOf(board.user.name))}</span><span class="user-name">${escape(board.user.name)}</span></div>
       ${iconButton('Conectar ao Codex ou Claude', 'connect', 'plug')}
       ${board.user.role === 'admin' ? iconButton('Administrar projetos e equipe', 'admin', 'settings') : ''}
       ${iconButton('Sair', 'logout', 'log-out')}
     </div>
+    <nav class="workspace-nav" aria-label="Área de trabalho" data-view="${view}">
+      <span class="nav-pill" aria-hidden="true"></span>
+      ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
+      ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
+      ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
+    </nav>
   </header>
   <section class="heading">
     <div><h1>${{ board: 'Quadro de tarefas', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]}</h1>
@@ -92,12 +94,31 @@ function renderShell() {
   </section>
   <div class="filters">
     ${view === 'board' ? `<label class="project-picker">${icon('layers-2')}<select aria-label="Projeto" id="project">${projectOptions(projectId)}</select></label>` : ''}
-    <label class="search">${icon('search')}<input type="search" id="search" aria-label="Buscar cartões" placeholder="Buscar cartões" value="${escape(search)}"><kbd aria-hidden="true">${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl '}K</kbd></label>
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
   </div>
   <div id="content"></div>`;
   renderContents();
+}
+
+function navigate(nextView) {
+  if (view === nextView) return;
+  const previous = root.querySelector('.nav-pill')?.getBoundingClientRect();
+  view = nextView;
+  search = '';
+  blockedOnly = false;
+  renderShell();
+  const pill = root.querySelector('.nav-pill');
+  if (previous?.width && previous.height && pill?.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const next = pill.getBoundingClientRect();
+    if (next.width && next.height) {
+      pill.animate([
+        { transform: `translate(${previous.left - next.left}px, ${previous.top - next.top}px) scaleX(${previous.width / next.width})` },
+        { transform: 'none' }
+      ], { duration: 320, easing: 'cubic-bezier(.16,1,.3,1)' });
+    }
+  }
+  root.querySelector('[aria-current=page]')?.focus({ preventScroll: true });
 }
 
 function cardTemplate(card) {
@@ -326,8 +347,7 @@ document.addEventListener('click', async (event) => {
   const { action, card, status } = control.dataset;
   try {
     if (['board', 'mine', 'archive'].includes(action)) {
-      view = action; search = ''; blockedOnly = false; renderShell();
-      root.querySelector('[aria-current=page]')?.focus();
+      navigate(action);
     } else if (action === 'filter') {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
     } else if (action === 'refresh') { await refresh(); message('Quadro atualizado.'); }
