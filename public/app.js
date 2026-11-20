@@ -160,15 +160,17 @@ function cardTemplate(card) {
       ${card.priority !== 'normal' ? `<span class="chip ${urgent ? 'priority-high' : ''}">${icon(urgent ? 'flag' : 'arrow-down')} Prioridade ${card.priority}</span>` : ''}
     </div>
     ${card.blocked ? `<p class="card-block-reason">${escape(card.blocked)}</p>` : ''}
-    <div class="card-meta">
-      <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
-      <span class="card-signals">
-        ${due ? `<span class="signal ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasado · ' : ''}<time datetime="${card.due}" title="${due}">${card.due.startsWith(today().slice(0, 4)) ? due.slice(0, 5) : due}</time></span>` : ''}
-        ${card.checklist.length ? `<span class="signal" aria-label="${checks} de ${card.checklist.length} passos concluídos">${icon('list-checks')} ${checks}/${card.checklist.length}</span>` : ''}
-        ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')} ${card.comments.length}</span>` : ''}
-      </span>
+    <div class="card-bottom">
+      <div class="card-meta">
+        <span class="row">${assignee ? `<span class="avatar" aria-hidden="true">${escape(initials)}</span>` : icon('user-round')}${escape(name)}</span>
+        <span class="card-signals">
+          ${due ? `<span class="signal ${overdue ? 'overdue' : ''}">${icon('calendar-days')}${overdue ? 'Atrasado · ' : ''}<time datetime="${card.due}" title="${due}">${card.due.startsWith(today().slice(0, 4)) ? due.slice(0, 5) : due}</time></span>` : ''}
+          ${card.checklist.length ? `<span class="signal" aria-label="${checks} de ${card.checklist.length} passos concluídos">${icon('list-checks')} ${checks}/${card.checklist.length}</span>` : ''}
+          ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')} ${card.comments.length}</span>` : ''}
+        </span>
+      </div>
+      <div class="card-footer">${nextCardAction(card)}</div>
     </div>
-    <div class="card-footer">${nextCardAction(card)}</div>
   </article>`;
 }
 
@@ -226,8 +228,8 @@ function openDialog(title, html, focusSelector, { details = '', footer = '', ori
       const y = origin.top + origin.height / 2 - target.top - target.height / 2;
       const scale = Math.max(.86, Math.min(1, origin.width / target.width));
       dialog.animate([
-        { transform: `translate(${x * .38}px, ${y * .38}px) scale(${scale})`, opacity: .65, borderRadius: '28px' },
-        { transform: 'none', opacity: 1, borderRadius: '20px' }
+        { transform: `translate(${x * .38}px, ${y * .38}px) scale(${scale})`, opacity: .65 },
+        { transform: 'none', opacity: 1 }
       ], { duration: 320, easing: 'cubic-bezier(.16,1,.3,1)' });
     }
   }
