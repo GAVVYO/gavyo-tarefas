@@ -67,6 +67,11 @@ export function createApp(store, { production = false, origin = '' } = {}) {
     }).json({ ok: true });
   });
 
+  // Lets the page decide between login and board without a 401 in the console.
+  app.get('/api/session', async (req, res) => {
+    res.json({ signedIn: Boolean(await store.identity(credential(req), 'Web')) });
+  });
+
   app.use('/api', async (req, _res, next) => {
     req.actor = await store.identity(credential(req), 'Web');
     if (!req.actor) throw new AppError(401, 'Entre para acessar o quadro.');

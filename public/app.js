@@ -155,13 +155,14 @@ function renderShell() {
     </nav>
   </header>
   <section class="heading">
-    <div><h1>${{ board: 'Quadro de tarefas', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]}</h1>
+    <div><h1>${view === 'board' && board.projects.length > 1
+      ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
+      : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view])}</h1>
       <p id="scope-summary" class="muted"></p>
     </div>
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
   </section>
   <div class="filters">
-    ${view === 'board' ? `<label class="project-picker">${icon('layers-2')}<select aria-label="Projeto" id="project">${projectOptions(projectId)}</select></label>` : ''}
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
   </div>
@@ -826,7 +827,10 @@ document.addEventListener('drop', (event) => {
 });
 
 async function start() {
-  try { await refresh({ shell: true }); }
+  try {
+    if (!(await request('/session')).signedIn) return login();
+    await refresh({ shell: true });
+  }
   catch (error) {
     if (error.status === 401) login();
     else {
