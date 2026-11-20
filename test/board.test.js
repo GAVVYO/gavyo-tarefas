@@ -26,7 +26,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
       method, headers: { ...(body && { 'content-type': 'application/json' }), ...headers },
       body: body && JSON.stringify(body)
     });
-    return { status: response.status, headers: response.headers, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: response.status === 304 ? null : await response.json() };
   };
 
   assert.equal((await request('/api/board')).status, 401);
@@ -70,6 +70,12 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
     return JSON.parse(result.content[0].text);
   }
 
+  const initialBoard = await request('/api/board', { headers });
+  const unchangedBoard = () => request('/api/board', {
+    headers: { ...headers, 'If-None-Match': initialBoard.headers.get('etag') }
+  });
+  assert.equal((await unchangedBoard()).status, 304);
+
   const task = await call('criar_tarefa', {
     title: 'Revisar preços', projectId: project.id, assigneeId: member.id, priority: 'alta', due: '2026-11-27'
   });
@@ -80,7 +86,10 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   assert.equal(moved.assigneeId, member.id);
   assert.equal(moved.due, '2026-11-27');
 
-  const board = (await request('/api/board', { headers })).body;
+  const updatedBoard = await unchangedBoard();
+  assert.equal(updatedBoard.status, 200);
+  assert.notEqual(updatedBoard.headers.get('etag'), initialBoard.headers.get('etag'));
+  const board = updatedBoard.body;
   const visible = board.cards.find((card) => card.id === task.id);
   assert.equal(visible.status, 'doing');
   assert.equal(visible.history.at(-1).source, 'Codex');

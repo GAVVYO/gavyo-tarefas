@@ -21,6 +21,9 @@ let moved = '';
 let dragged;
 let noticeTimer;
 let restoreFocus;
+let boardTag;
+let boardRevision = 0;
+let pendingWrites = 0;
 
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -70,12 +73,21 @@ const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortal
 const cardById = (id) => [...board.cards, ...board.archive].find((card) => card.id === id);
 
 async function request(path, method = 'GET', data) {
-  const response = await fetch('/api' + path, {
-    method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
-  });
-  const body = await response.json();
-  if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
-  return body;
+  const writing = method !== 'GET';
+  if (writing) {
+    pendingWrites++;
+    boardRevision++;
+  }
+  try {
+    const response = await fetch('/api' + path, {
+      method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
+    });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
+    return body;
+  } finally {
+    if (writing) pendingWrites--;
+  }
 }
 
 function message(text) {
@@ -162,12 +174,43 @@ function backgroundPicker() {
   </div>`;
 }
 
-async function refresh({ shell = false } = {}) {
-  board = await request('/board');
-  applyBackground(board.preferences);
+async function readBoard(tag, signal) {
+  const response = await fetch('/api/board', {
+    headers: tag ? { 'If-None-Match': tag } : {},
+    signal
+  });
+  if (response.status === 304) return null;
+  const data = await response.json();
+  if (!response.ok) throw Object.assign(new Error(data.error), { status: response.status });
+  return { data, tag: response.headers.get('ETag') };
+}
+
+function acceptBoard(snapshot) {
+  board = snapshot.data;
+  boardTag = snapshot.tag;
+  boardRevision++;
   projectId = board.projects.some((project) => project.id === projectId) ? projectId : board.projects[0]?.id || '';
+}
+
+async function refresh({ shell = false } = {}) {
+  boardRevision++;
+  acceptBoard(await readBoard());
+  applyBackground(board.preferences);
   if (shell) renderShell();
   else renderContents();
+}
+
+function projectHeading() {
+  return view === 'board' && board.projects.length > 1
+    ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
+    : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
+}
+
+function updateProjectHeading() {
+  const restorePickerFocus = document.activeElement?.id === 'project';
+  root.querySelector('.heading h1').innerHTML = projectHeading();
+  root.querySelector('.filters [data-action=new]').disabled = !board.projects.length;
+  if (restorePickerFocus) root.querySelector('#project')?.focus({ preventScroll: true });
 }
 
 function renderShell() {
@@ -191,9 +234,7 @@ function renderShell() {
     </nav>
   </header>
   <section class="heading">
-    <div><h1>${view === 'board' && board.projects.length > 1
-      ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
-      : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view])}</h1>
+    <div><h1>${projectHeading()}</h1>
       <p id="scope-summary" class="muted"></p>
     </div>
     <div id="mural-slot" class="mural-slot"></div>
@@ -567,7 +608,7 @@ function actionSentence(action) {
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts.at(-1)}` : parts[0];
 }
 
-function showCard(card, origin) {
+function showCard(card, origin, focus = true) {
   if (!card) return;
   const project = board.projects.find((item) => item.id === card.projectId);
   const assignee = board.members.find((item) => item.id === card.assigneeId);
@@ -663,7 +704,7 @@ function showCard(card, origin) {
         ${editorPanels(card)}
         <div class="error task-edit-error" role="alert"></div>
       </form>
-    </section>`, '#dialog-title', { details, footer, origin });
+    </section>`, focus ? '#dialog-title' : null, { details, footer, origin });
   paintTrails(dialog);
 }
 
@@ -782,9 +823,10 @@ async function placeCard(id, status, dragSource) {
   const card = cardById(id);
   if (!card || status === card.status) return;
   await request(`/cards/${id}`, 'PATCH', { status, version: card.version });
-  const data = await request('/board');
+  boardRevision++;
+  const snapshot = await readBoard();
   const paint = () => {
-    board = data;
+    acceptBoard(snapshot);
     moved = dragSource ? '' : id;
     renderContents();
     moved = '';
@@ -948,6 +990,7 @@ document.addEventListener('change', async (event) => {
       const response = await fetch('/api/preferences/background', { method: 'POST', headers: { 'content-type': body.type || bgInput.files[0].type }, body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Não deu para usar essa imagem.');
+      boardRevision++;
       board.preferences = data;
       applyBackground(data);
       root.querySelector('#bg-slot').innerHTML = backgroundPicker();
@@ -1000,7 +1043,10 @@ document.addEventListener('click', async (event) => {
         block?.setAttribute('tabindex', '-1');
         block?.focus({ preventScroll: true });
       }
-    } else if (action === 'task-section') setTaskSection(control.dataset.section, control.dataset.step);
+    } else if (action === 'task-section') {
+      syncOpenCard();
+      setTaskSection(control.dataset.section, control.dataset.step);
+    }
     else if (action === 'task-step') setEditorStep(control.dataset.step);
     else if (action === 'task-step-shift') {
       const index = editorSteps.findIndex(([key]) => key === dialog.dataset.editorStep);
@@ -1079,13 +1125,14 @@ document.addEventListener('click', async (event) => {
       dialog.querySelector('[data-action=add-check]').focus();
     } else if (action === 'logout') {
       await request('/logout', 'POST', {});
-      board = null; view = 'board'; projectId = ''; search = ''; blockedOnly = false;
+      stopBoardSync();
+      view = 'board'; projectId = ''; search = ''; blockedOnly = false;
       applyBackground(null);
       login();
     }
   } catch (error) {
     message(error.message);
-    if (error.status === 401) { dialog.close(); login(); }
+    if (error.status === 401) endBoardSession();
     if (error.status === 409) await refresh().catch(() => {});
   } finally {
     if (action === 'move') control.disabled = false;
@@ -1130,7 +1177,8 @@ document.addEventListener('submit', async (event) => {
           title: row.querySelector('input[type=text]').value.trim(), done: row.querySelector('input[type=checkbox]').checked
         })).filter((item) => item.title);
       }
-      const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version: Number(form.dataset.version) });
+      const version = Number(form.dataset.version);
+      const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version });
       await refresh();
       if (kind === 'comment' && form.isConnected) {
         const thread = dialog.querySelector('#task-comments');
@@ -1138,7 +1186,8 @@ document.addEventListener('submit', async (event) => {
         thread.lastElementChild?.setAttribute('data-fresh', '');
         thread.scrollTop = thread.scrollHeight;
         dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
-        dialog.querySelector('#task-edit').dataset.version = card.version;
+        const editor = dialog.querySelector('#task-edit');
+        if (Number(editor.dataset.version) === version) editor.dataset.version = card.version;
         form.dataset.version = card.version;
         form.reset();
         form.querySelector('[name=comment]').focus();
@@ -1235,25 +1284,106 @@ document.addEventListener('drop', (event) => {
   if (source) void placeCard(dragged, column.dataset.status, source).catch((error) => message(error.message));
 });
 
-/** O quadro se atualiza sozinho (o que o assistente ou outra pessoa mudou aparece sem clicar). */
-let autoTimer;
-function autoRefresh() {
-  clearInterval(autoTimer);
-  autoTimer = setInterval(async () => {
-    if (!board || document.hidden || dialog.open || dragged || document.querySelector('.viewer, .menu[open]') ||
-      document.activeElement?.matches?.('input, textarea, select')) return;
-    try {
-      const fresh = await request('/board');
-      const sign = (data) => JSON.stringify([data.cards.map((card) => [card.id, card.version]), data.archive.length, data.members.length]);
-      const changed = sign(fresh) !== sign(board);
-      board = fresh;
-      if (changed) renderContents();
-      else root.querySelectorAll('[data-live=true]').length && renderContents();
-    } catch (error) {
-      if (error.status === 401) { clearInterval(autoTimer); login(); }
-    }
-  }, 20000);
+function syncOpenCard() {
+  const editor = dialog.open && dialog.querySelector('#task-edit');
+  if (!editor) return;
+  const card = cardById(editor.dataset.card);
+  if (!card || card.version === Number(editor.dataset.version)) return;
+
+  const composer = dialog.querySelector('[data-form=comment]');
+  const textarea = composer.elements.comment;
+  const section = dialog.querySelector('[data-task-section]:not([hidden])').dataset.taskSection;
+  const thread = dialog.querySelector('#task-comments');
+  const atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 24;
+  if (card.version !== Number(composer.dataset.version) && !composer.querySelector('button:disabled')) {
+    thread.innerHTML = cardActivity(card);
+    if (atBottom) thread.scrollTop = thread.scrollHeight;
+    dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
+    composer.dataset.version = card.version;
+  }
+  const active = document.activeElement;
+  const inputFocused = dialog.contains(active) && active.matches('input, textarea, select');
+  if (section === 'edit' || inputFocused ||
+      dialog.querySelector('.print-add[data-busy], .composer button:disabled') || document.querySelector('.viewer')) return;
+
+  const focusedSection = dialog.contains(active) ? active.dataset.section : null;
+  const draft = textarea.value;
+  const scroll = dialog.querySelector('.dialog-body').scrollTop;
+  const threadScroll = thread.scrollTop;
+  showCard(card, undefined, dialog.contains(active));
+  setTaskSection(section);
+  dialog.querySelector('[name=comment]').value = draft;
+  dialog.querySelector('.dialog-body').scrollTop = scroll;
+  const nextThread = dialog.querySelector('#task-comments');
+  nextThread.scrollTop = atBottom ? nextThread.scrollHeight : threadScroll;
+  if (focusedSection) dialog.querySelector(`.inspector-nav [data-section="${focusedSection}"]`)?.focus({ preventScroll: true });
 }
+
+const boardSyncDelay = 3000;
+let autoTimer;
+let syncingBoard = false;
+let nextActivityRender = 0;
+
+function stopBoardSync() {
+  clearTimeout(autoTimer);
+  board = null;
+  boardTag = null;
+  boardRevision++;
+}
+
+function endBoardSession() {
+  stopBoardSync();
+  dialog.close();
+  applyBackground(null);
+  void login();
+}
+
+function autoRefresh(delay = boardSyncDelay) {
+  clearTimeout(autoTimer);
+  if (board && !document.hidden) autoTimer = setTimeout(syncBoard, delay);
+}
+
+function boardIsBusy() {
+  return pendingWrites || dragged || document.querySelector('.menu[open]') ||
+    document.documentElement.hasAttribute('data-card-transition');
+}
+
+async function syncBoard() {
+  if (!board || document.hidden || syncingBoard) return;
+  let delay = boardSyncDelay;
+  syncingBoard = true;
+  const revision = boardRevision;
+  try {
+    if (boardIsBusy()) return;
+    const snapshot = await readBoard(boardTag, AbortSignal.timeout(10000));
+    if (!board || revision !== boardRevision || document.hidden || boardIsBusy()) return;
+    if (snapshot) {
+      const { projects, preferences } = board;
+      acceptBoard(snapshot);
+      const headingChanged = JSON.stringify(projects) !== JSON.stringify(board.projects);
+      if (headingChanged) updateProjectHeading();
+      if (JSON.stringify(preferences) !== JSON.stringify(board.preferences)) {
+        applyBackground(board.preferences);
+        root.querySelector('#bg-slot').innerHTML = backgroundPicker();
+      }
+      renderContents();
+      nextActivityRender = Date.now() + 60000;
+    } else if (Date.now() >= nextActivityRender && root.querySelector('[data-live=true]')) {
+      renderContents();
+      nextActivityRender = Date.now() + 60000;
+    }
+    syncOpenCard();
+  } catch (error) {
+    if (error.status === 401 && revision === boardRevision) endBoardSession();
+    else delay = 10000;
+  } finally {
+    syncingBoard = false;
+    autoRefresh(delay);
+  }
+}
+
+document.addEventListener('visibilitychange', () => autoRefresh(0));
+window.addEventListener('online', () => autoRefresh(0));
 
 async function start() {
   try {

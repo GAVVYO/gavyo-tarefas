@@ -46,7 +46,7 @@ No Claude Code, inicie a sessão com `GAVYO_MCP_TOKEN` disponível no ambiente. 
 }
 ```
 
-Para testes locais, troque o URL por `http://127.0.0.1:3000/mcp`. Use o botão **Atualizar quadro** para carregar mudanças feitas pelo MCP ou por outra pessoa. Guarde tokens fora do Git.
+Para testes locais, troque o URL por `http://127.0.0.1:3000/mcp`. O quadro busca automaticamente as mudanças da equipe e do MCP enquanto a aba estiver visível. Guarde tokens fora do Git.
 
 ## Hospedagem
 

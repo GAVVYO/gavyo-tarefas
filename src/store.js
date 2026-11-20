@@ -176,14 +176,29 @@ export function createStore({ query }) {
 
   const decode = (row) => ({ ...JSON.parse(row.document), version: row.version });
 
-  async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
+  const cardVersions = () => query('SELECT id, version FROM cards ORDER BY id');
+
+  async function readCards(projectId) {
     await numberCards();
     const rows = projectId
       ? await query('SELECT version, document FROM cards WHERE project_id = ?', [projectId])
       : await query('SELECT version, document FROM cards');
-    return rows.map(decode).filter((card) => card.archived === archived &&
-      (!blocked || card.blocked) && (!assigneeId || card.assigneeId === assigneeId))
-      .sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
+    return rows.map(decode).sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
+  }
+
+  async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
+    return (await readCards(projectId)).filter((card) => card.archived === archived &&
+      (!blocked || card.blocked) && (!assigneeId || card.assigneeId === assigneeId));
+  }
+
+  async function boardCards() {
+    const cards = [];
+    const archive = [];
+    for (const card of await readCards()) {
+      if (card.archived === false) cards.push(card);
+      else if (card.archived === true) archive.push(card);
+    }
+    return { cards, archive };
   }
 
   async function updateCard(id, input, actor, expectedVersion) {
@@ -280,5 +295,5 @@ export function createStore({ query }) {
     return { previous: current, saved: next };
   }
 
-  return { preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }
