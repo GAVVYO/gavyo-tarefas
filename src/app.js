@@ -118,7 +118,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     // Imagens só na rota de anexos; um formulário de outro site não consegue mandar esse tipo sem pedir licença ao servidor.
-    const image = req.method === 'POST' && /^\/(cards\/[^/]+\/attachments|preferences\/background)$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
+    const image = req.method === 'POST' && /^\/(cards\/[^/]+\/attachments|preferences\/background|team\/images)$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
     if (req.method !== 'GET' && ((!req.is('application/json') && !image) ||
       (req.get('origin') && req.get('origin') !== (origin || `${req.protocol}://${req.get('host')}`)))) {
       throw new AppError(403, 'Origem da solicitação inválida.');
@@ -149,6 +149,27 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     next();
   });
 
+  app.post('/api/team/images', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
+    const type = IMAGE_TYPES[req.get('content-type')];
+    if (!type || !Buffer.isBuffer(req.body) || !type.magic(req.body)) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF válida.');
+    const id = crypto.randomUUID();
+    const dir = join(uploadRoot, 'team');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const path = join(dir, id + '.' + type.ext);
+    await writeFile(path, req.body, { mode: 0o600 });
+    try {
+      res.status(201).json(await store.saveTeamImage({ id, type: req.get('content-type'), size: req.body.length, url: '/api/team/images/' + id }, req.actor));
+    } catch (error) { await unlink(path).catch(() => {}); throw error; }
+  });
+  app.get('/api/team/images/:id', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const image = await store.teamImage(id);
+    const ext = IMAGE_TYPES[image.type]?.ext;
+    if (!ext) throw new AppError(404, 'Imagem não encontrada.');
+    const bytes = await readFile(join(uploadRoot, 'team', id + '.' + ext)).catch(() => null);
+    if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
+    res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=604800' }).send(bytes);
+  });
   app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
   app.get('/api/team/messages/stream', async (req, res) => {
     const cursor = req.get('Last-Event-ID') ?? req.query.after ?? '0';

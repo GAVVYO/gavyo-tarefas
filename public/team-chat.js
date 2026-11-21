@@ -1,7 +1,7 @@
 import { avatarFor } from './profile-dock.js';
 
 /** Conversa global isolada do DOM do quadro e dos rascunhos dos cartões. */
-export function setupTeamChat({ request, onExpired }) {
+export function setupTeamChat({ request, onExpired, getCards, onCard }) {
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.className = 'btn team-chat-trigger';
@@ -34,7 +34,14 @@ export function setupTeamChat({ request, onExpired }) {
   </div>
   <form class="team-chat-form">
     <label for="team-chat-text">Mensagem para a equipe</label>
-    <textarea id="team-chat-text" rows="3" maxlength="4000" required placeholder="Escreva sua mensagem…"></textarea>
+    <textarea id="team-chat-text" rows="3" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
+    <div class="team-chat-attachments" aria-live="polite"></div>
+    <div class="team-chat-tools">
+      <label class="btn team-chat-upload">Enviar imagem<input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
+      <details class="team-chat-picker"><summary class="btn">Mencionar cartão</summary>
+        <div class="team-chat-card-menu"><label>Buscar cartão<input type="search" class="team-chat-card-search" placeholder="Número ou título"></label><div class="team-chat-card-results"></div></div>
+      </details>
+    </div>
     <div><small class="muted">Enter envia · Shift+Enter quebra linha · Ctrl+Shift+Z abre o chat</small><button class="btn primary" type="submit">Enviar mensagem</button></div>
   </form>`;
   document.body.append(panel);
@@ -56,6 +63,62 @@ export function setupTeamChat({ request, onExpired }) {
   document.body.append(toast);
   toast.addEventListener('click', open);
   let messages = [], hasOlder = false, retrySend = false, pendingMessage = null;
+  let attachments = [], mentioned = [], uploading = false;
+  const pending = find('.team-chat-attachments');
+  const picker = find('.team-chat-picker');
+  const searchCards = find('.team-chat-card-search');
+  function renderPending() {
+    pending.replaceChildren();
+    attachments.forEach(image => {
+      const chip = document.createElement('span'); chip.className = 'team-chat-chip';
+      const img = document.createElement('img'); img.src = image.url; img.alt = 'Imagem para enviar';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remover imagem';
+      remove.onclick = () => { attachments = attachments.filter(i => i.id !== image.id); renderPending(); };
+      chip.append(img, remove); pending.append(chip);
+    });
+    mentioned.forEach(card => {
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn';
+      remove.textContent = `${card.key}: ${card.title} ×`; remove.setAttribute('aria-label', `Remover menção a ${card.key}`);
+      remove.onclick = () => { mentioned = mentioned.filter(c => c.id !== card.id); renderPending(); };
+      pending.append(remove);
+    });
+  }
+  function cardResults() {
+    const results = find('.team-chat-card-results'); results.replaceChildren();
+    const query = searchCards.value.trim().toLocaleLowerCase('pt-BR');
+    const cards = (getCards?.() || []).filter(c => `${c.key} ${c.title}`.toLocaleLowerCase('pt-BR').includes(query)).slice(0,30);
+    for (const card of cards) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = `${card.key}: ${card.title}`;
+      button.onclick = () => {
+        if (mentioned.length < 10 && !mentioned.some(c => c.id === card.id)) mentioned.push(card);
+        renderPending(); picker.open = false; input.focus();
+      };
+      results.append(button);
+    }
+    if (!cards.length) results.textContent = 'Nenhum cartão encontrado.';
+  }
+  picker.addEventListener('toggle', () => { if (picker.open) { cardResults(); searchCards.focus(); } });
+  searchCards.addEventListener('input', cardResults);
+  find('[type=file]').addEventListener('change', async event => {
+    const files = [...event.target.files]; event.target.value = '';
+    if (uploading || sending || !user) return;
+    if (files.length + attachments.length > 4) { feedback.textContent = 'Escolha no máximo 4 imagens por mensagem.'; return; }
+    if (files.some(f => !['image/png','image/jpeg','image/webp','image/gif'].includes(f.type) || f.size > 8*1024*1024)) {
+      feedback.textContent = 'Use PNG, JPG, WebP ou GIF de até 8 MB.'; return;
+    }
+    const current = session; uploading = true; send.disabled = true; feedback.textContent = 'Enviando imagens…';
+    try {
+      for (const file of files) {
+        const response = await fetch('/api/team/images', { method: 'POST', headers: { 'Content-Type': file.type }, body: file, signal: AbortSignal.timeout(30000) });
+        const image = await response.json();
+        if (!response.ok) throw Object.assign(new Error(image.error), { status: response.status });
+        if (current !== session) return;
+        attachments.push(image); renderPending();
+      }
+      feedback.textContent = 'Imagem pronta. Envie a mensagem para compartilhar.';
+    } catch (error) { if (current === session) { feedback.textContent = error.message || 'Não foi possível enviar a imagem.'; if (error.status === 401) { setUser(null); onExpired(); } } }
+    finally { if (current === session) { uploading = false; send.disabled = false; } }
+  });
   let viewportCleanup;
   const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
   const lastSequence = () => messages.at(-1)?.sequence;
@@ -110,6 +173,16 @@ export function setupTeamChat({ request, onExpired }) {
       const text = document.createElement('p');
       text.textContent = message.text;
       content.append(by, time, text);
+      for (const image of message.images || []) {
+        const link = document.createElement('a'); link.href = image.url; link.target = '_blank'; link.rel = 'noopener'; link.setAttribute('aria-label', 'Abrir imagem da mensagem');
+        const img = document.createElement('img'); img.src = image.url; img.alt = 'Imagem compartilhada'; img.className = 'team-chat-image'; img.loading = 'lazy';
+        link.append(img); content.append(link);
+      }
+      for (const card of message.cards || []) {
+        const link = document.createElement('button'); link.type = 'button'; link.className = 'btn team-chat-card'; link.textContent = `${card.key}: ${card.title}`;
+        link.onclick = () => { panel.addEventListener('close', () => onCard?.(card.id), { once: true }); panel.close(); };
+        content.append(link);
+      }
       article.append(avatar, content);
       fragment.append(article);
     }
@@ -144,11 +217,11 @@ export function setupTeamChat({ request, onExpired }) {
           trigger.setAttribute('aria-label', `Abrir chat da equipe: ${unreadCount} mensagens não lidas (Ctrl+Shift+Z)`);
           if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
             try {
-              const notice = new Notification(`${msg.author.name} no chat da equipe`, { body: msg.text.slice(0,160), icon: '/aguia-dourada.svg', tag: 'gavyo-team-chat' });
+              const notice = new Notification(`${msg.author.name} no chat da equipe`, { body: (msg.text || (msg.images?.length ? 'Enviou uma imagem' : 'Mencionou um cartão')).slice(0,160), icon: '/aguia-dourada.svg', tag: 'gavyo-team-chat' });
               notice.onclick = () => { window.focus(); open(); notice.close(); };
             } catch { /* O contador permanece disponível se o navegador não aceitar o aviso. */ }
           } else if (!document.hidden) {
-            toast.textContent = `${msg.author.name}: ${msg.text.slice(0,100)} — Abrir chat`;
+            toast.textContent = `${msg.author.name}: ${(msg.text || (msg.images?.length ? 'Enviou uma imagem' : 'Mencionou um cartão')).slice(0,100)} — Abrir chat`;
             toast.hidden = false;
             if (!toast.matches(':popover-open')) toast.showPopover?.();
           }
@@ -276,13 +349,14 @@ export function setupTeamChat({ request, onExpired }) {
   find('.team-chat-retry').addEventListener('click', () => retrySend ? form.requestSubmit() : void load());
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (sending || !user) return;
+    if (sending || uploading || !user) return;
     const text = input.value.trim();
-    if (!text || text.length > 4000) { input.setCustomValidity('Escreva uma mensagem com até 4000 caracteres.'); input.reportValidity(); return; }
+    if ((!text && !attachments.length && !mentioned.length) || text.length > 4000) { input.setCustomValidity('Escreva uma mensagem com até 4000 caracteres.'); input.reportValidity(); return; }
     const current = session;
-    if (!pendingMessage || pendingMessage.text !== text) pendingMessage = { text, clientId: crypto.randomUUID() };
-    const payload = pendingMessage;
-    sending = true;
+    const draft = { text, images: attachments.map(i => i.id), cards: mentioned.map(c => c.id) };
+    if (!pendingMessage || JSON.stringify(pendingMessage.draft) !== JSON.stringify(draft)) pendingMessage = { ...draft, clientId: crypto.randomUUID(), draft };
+    const { draft: ignoredDraft, ...payload } = pendingMessage;
+    sending = true; find('.team-chat-tools').inert = true; pending.inert = true;
     input.disabled = true;
     send.disabled = true;
     send.textContent = 'Enviando…';
@@ -291,7 +365,7 @@ export function setupTeamChat({ request, onExpired }) {
       await request('/team/messages', 'POST', payload, { signal: AbortSignal.timeout(15000) });
       if (current !== session) return;
       // Buscar pelo cursor mantém a ordem se outra pessoa enviou durante a escrita.
-      input.value = '';
+      input.value = ''; attachments = []; mentioned = []; renderPending();
       pendingMessage = null;
       errorBox.hidden = true;
       retrySend = false;
@@ -301,7 +375,7 @@ export function setupTeamChat({ request, onExpired }) {
       if (current === session) { feedback.textContent = ''; fail(error, true); }
     } finally {
       if (current === session) {
-        sending = false; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
+        sending = false; find('.team-chat-tools').inert = false; pending.inert = false; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
         if (panel.open) input.focus({ preventScroll: true });
       }
     }
@@ -317,7 +391,7 @@ export function setupTeamChat({ request, onExpired }) {
       if (panel.open) panel.close(); else open();
     } else if (panel.open && event.target === input && event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (!sending && input.value.trim()) form.requestSubmit();
+      if (!sending && !uploading && (input.value.trim() || attachments.length || mentioned.length)) form.requestSubmit();
     } else if (panel.open && event.key === 'Escape' && !event.isComposing) {
       event.preventDefault(); event.stopImmediatePropagation(); panel.close();
     } else if (panel.open) {
@@ -333,6 +407,7 @@ export function setupTeamChat({ request, onExpired }) {
     disconnect();
     user = next;
     if (panel.open) panel.close();
+    attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending(); picker.open = false;
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
     input.value = ''; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
     log.replaceChildren(); older.hidden = true; empty.hidden = false; empty.textContent = 'Carregando mensagens…';

@@ -26,6 +26,7 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
   }
   const definitions = [
     'members (id VARCHAR(36) PRIMARY KEY, email VARCHAR(254) UNIQUE NOT NULL, name VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL)',
+    'team_images (id VARCHAR(36) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))',
     'projects (id VARCHAR(36) PRIMARY KEY, name VARCHAR(100) UNIQUE NOT NULL)',
     'cards (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, version INTEGER NOT NULL, document MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',
     'card_numbers (project_id VARCHAR(36) PRIMARY KEY, last_number INTEGER NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',

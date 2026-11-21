@@ -613,7 +613,18 @@ export function createStore({ query }) {
     before: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     after: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
   }).strict().refine(q => q.before === undefined || q.after === undefined, 'Use before ou after, não os dois.');
-  const chatInput = z.object({ text: text(4000), clientId: z.uuid() }).strict();
+  const chatInput = z.object({ text: z.string().trim().max(4000).default(''), clientId: z.uuid(),
+    images: z.array(z.uuid()).max(4).default([]), cards: z.array(z.uuid()).max(10).default([])
+  }).strict().refine(v => v.text || v.images.length || v.cards.length, 'Escreva uma mensagem ou escolha um anexo.');
+  async function saveTeamImage(image, actor) {
+    await query('INSERT INTO team_images (id, member_id, data) VALUES (?, ?, ?)', [image.id, actor.id, JSON.stringify(image)]);
+    return image;
+  }
+  async function teamImage(id) {
+    const row = await first('SELECT member_id, data FROM team_images WHERE id = ?', [id]);
+    if (!row) throw new AppError(404, 'Imagem não encontrada.');
+    return { ...JSON.parse(row.data), memberId: row.member_id };
+  }
   const chatRow = row => ({ ...JSON.parse(row.data), sequence: Number(row.sequence) });
   const chatListeners = new Set();
   function subscribeTeamMessages(listener) {
@@ -634,15 +645,25 @@ export function createStore({ query }) {
       nextAfter: messages.at(-1)?.sequence ?? after ?? null };
   }
   async function addTeamMessage(input, actor) {
-    const { text, clientId } = chatInput.parse(input);
-    const message = { id: clientId, text, author: { id: actor.id, name: actor.name }, at: new Date().toISOString() };
+    const { text, clientId, images: imageIds, cards: cardIds } = chatInput.parse(input);
+    const images = await Promise.all([...new Set(imageIds)].map(async id => {
+      const image = await teamImage(id);
+      if (image.memberId !== actor.id) throw new AppError(403, 'Só é possível anexar imagens enviadas por você.');
+      const { memberId, ...publicImage } = image;
+      return publicImage;
+    }));
+    const cards = await Promise.all([...new Set(cardIds)].map(async id => {
+      const card = await getCard(id);
+      return { id: card.id, key: card.key, title: card.title };
+    }));
+    const message = { id: clientId, text, images, cards, author: { id: actor.id, name: actor.name }, at: new Date().toISOString() };
     try {
       await query('INSERT INTO team_messages (id, member_id, data) VALUES (?, ?, ?)', [clientId, actor.id, JSON.stringify(message)]);
     } catch (error) {
       if (error.code !== 'ER_DUP_ENTRY' && !/UNIQUE constraint failed/.test(error.message)) throw error;
       const existing = await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]);
       const previous = existing && chatRow(existing);
-      if (!previous || previous.author.id !== actor.id || previous.text !== text) throw new AppError(409, 'Identificador de mensagem já usado.');
+      if (!previous || previous.author.id !== actor.id || previous.text !== text || JSON.stringify((previous.images || []).map(i => i.id)) !== JSON.stringify(images.map(i => i.id)) || JSON.stringify((previous.cards || []).map(c => c.id)) !== JSON.stringify(cards.map(c => c.id))) throw new AppError(409, 'Identificador de mensagem já usado.');
       return previous;
     }
     const saved = chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
@@ -661,5 +682,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { ...createFinance({ query, project, members, event, AppError }), subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }
