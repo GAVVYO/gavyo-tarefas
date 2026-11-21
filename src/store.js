@@ -234,7 +234,9 @@ export function createStore({ query }) {
       const row = await first('SELECT version, document FROM cards WHERE id = ?', [id]);
       if (!row) throw new AppError(404, 'Cartão não encontrado.');
       const { version, ...current } = decode(row);
-      if (expectedVersion != null && version !== expectedVersion) break;
+      // Comentário só acrescenta, nunca sobrescreve: entra mesmo se o cartão mudou desde que a pessoa abriu.
+      const onlyComment = comment && !Object.keys(patch).length;
+      if (expectedVersion != null && version !== expectedVersion && !onlyComment) break;
       const changes = Object.entries(patch).filter(([key, value]) =>
         JSON.stringify(value) !== JSON.stringify(current[key]));
       if (!changes.length && !comment) return { ...current, version };

@@ -1127,7 +1127,18 @@ function setTaskSection(section) {
 async function saveCard(id, patch, done) {
   const card = cardById(id);
   if (!card) return;
-  await request(`/cards/${id}`, 'PATCH', { ...patch, version: card.version });
+  try {
+    await request(`/cards/${id}`, 'PATCH', { ...patch, version: card.version });
+  } catch (error) {
+    if (error.status !== 409) throw error;
+    // Outra pessoa (ou uma IA) mexeu no cartão. Se não foi nos mesmos campos, grava por cima da versão nova.
+    await refresh();
+    const now = cardById(id);
+    const clash = !now || Object.keys(patch).some((key) => key !== 'comment' && JSON.stringify(card[key]) !== JSON.stringify(now[key]));
+    if (clash && now && dialog.open && dialog.querySelector('.ficha')?.dataset.card === id) rerenderCard(now);
+    if (clash) throw Object.assign(new Error('Alguém mudou esse mesmo campo agora há pouco. Veja o valor novo e, se precisar, mude de novo.'), { status: 409 });
+    await request(`/cards/${id}`, 'PATCH', { ...patch, version: now.version });
+  }
   await refresh();
   if (dialog.open && dialog.querySelector('.ficha')?.dataset.card === id) rerenderCard(cardById(id));
   if (done) message(done);
@@ -1953,7 +1964,7 @@ document.addEventListener('submit', async (event) => {
       pin.focus();
     }
     if (error.status === 409 && (kind === 'edit' || kind === 'comment')) {
-      errorNode.textContent += ' Feche e reabra o cartão antes de salvar.';
+      if (kind === 'edit') errorNode.textContent += ' Feche e reabra o cartão antes de salvar.';
       await refresh().catch(() => {});
     }
   } finally {
@@ -2022,6 +2033,9 @@ document.addEventListener('drop', (event) => {
   const source = root.querySelector(`[data-id="${dragged}"]`)?.getBoundingClientRect();
   if (source) void placeCard(dragged, column.dataset.status, source).catch((error) => message(error.message));
 });
+
+// Quem terminou de digitar recebe o que mudou enquanto digitava (título, etapa, prazo de outra pessoa).
+dialog.addEventListener('focusout', () => setTimeout(syncOpenCard, 0));
 
 function syncOpenCard() {
   const ficha = dialog.open && dialog.querySelector('.ficha');
