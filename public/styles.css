@@ -1889,3 +1889,11 @@ dialog.team-chat[open]{overflow:hidden;box-shadow:0 24px 80px #0009;border:1px s
 .team-chat-card-results .btn{display:block;padding:10px 12px;border:0;border-bottom:1px solid var(--line);background:transparent;line-height:1.4}
 .team-chat-card-results .btn:hover{background:var(--hover)}
 @media(prefers-reduced-motion:reduce){.team-chat-trigger.team-chat-over{transform:none}}
+
+.team-chat-form .team-chat-composer{display:flex;flex-wrap:nowrap;align-items:flex-end;gap:6px;padding:6px;background:var(--well);border:1px solid var(--control-line);border-radius:var(--radius-control)}
+.team-chat-composer:focus-within{border-color:var(--accent)}
+.team-chat-form .team-chat-composer textarea{flex:1;min-width:0;min-height:64px;padding:8px 2px;border:0;background:transparent;box-shadow:none;outline:none}
+.team-chat-composer .team-chat-upload,.team-chat-composer .team-chat-send{display:grid;place-items:center;flex:none;width:36px;height:36px;min-height:36px;margin:0;padding:0;border-radius:var(--radius-control);font-size:24px;line-height:1;cursor:pointer}
+.team-chat-composer .team-chat-upload{background:transparent;border:0;color:var(--muted)}
+.team-chat-composer .team-chat-upload:hover{background:var(--hover);color:var(--ink)}
+.team-chat-composer .team-chat-send{font-size:22px}

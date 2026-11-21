@@ -34,15 +34,13 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
   </div>
   <form class="team-chat-form">
     <label for="team-chat-text">Mensagem para a equipe</label>
-    <textarea id="team-chat-text" rows="3" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
-    <div class="team-chat-attachments" aria-live="polite"></div>
-    <div class="team-chat-tools">
-      <label class="btn team-chat-upload">Enviar imagem<input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
-      <details class="team-chat-picker"><summary class="btn">Adicionar cartão</summary>
-        <div class="team-chat-card-menu"><label>Buscar cartão<input type="search" class="team-chat-card-search" placeholder="Número ou título"></label><div class="team-chat-card-results"></div></div>
-      </details>
+    <div class="team-chat-tools team-chat-composer">
+      <label class="btn team-chat-upload" title="Adicionar imagem"><span aria-hidden="true">+</span><input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
+      <textarea id="team-chat-text" rows="2" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
+      <button class="btn primary team-chat-send" type="submit" aria-label="Enviar mensagem" title="Enviar mensagem"><span aria-hidden="true">↑</span></button>
     </div>
-    <div><small class="muted">Enter envia · Shift+Enter quebra linha · Ctrl+Shift+Z abre o chat</small><button class="btn primary" type="submit">Enviar mensagem</button></div>
+    <div class="team-chat-attachments" aria-live="polite"></div>
+    <small class="muted">Enter envia · Shift+Enter quebra linha · Arraste cartões até o chat</small>
   </form>`;
   document.body.append(panel);
   const find = s => panel.querySelector(s);
@@ -65,8 +63,6 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
   let messages = [], hasOlder = false, retrySend = false, pendingMessage = null;
   let attachments = [], mentioned = [], uploading = false;
   const pending = find('.team-chat-attachments');
-  const picker = find('.team-chat-picker');
-  const searchCards = find('.team-chat-card-search');
   function renderPending() {
     pending.replaceChildren();
     attachments.forEach(image => {
@@ -151,22 +147,6 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       ], { duration: 720, easing: 'ease-in-out', fill: 'forwards' }).finished;
     } finally { flight.remove(); }
   }
-  function cardResults() {
-    const results = find('.team-chat-card-results'); results.replaceChildren();
-    const query = searchCards.value.trim().toLocaleLowerCase('pt-BR');
-    const cards = (getCards?.() || []).filter(c => `${c.key} ${c.title}`.toLocaleLowerCase('pt-BR').includes(query)).slice(0,30);
-    for (const card of cards) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = `${card.key} · ${card.title}`;
-      button.onclick = () => {
-        mentionCard(card);
-        renderPending(); picker.open = false; input.focus();
-      };
-      results.append(button);
-    }
-    if (!cards.length) results.textContent = 'Nenhum cartão encontrado.';
-  }
-  picker.addEventListener('toggle', () => { if (picker.open) { cardResults(); searchCards.focus(); } });
-  searchCards.addEventListener('input', cardResults);
   find('[type=file]').addEventListener('change', async event => {
     const files = [...event.target.files]; event.target.value = '';
     if (uploading || sending || !user) return;
@@ -427,7 +407,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     sending = true; find('.team-chat-tools').inert = true; pending.inert = true;
     input.disabled = true;
     send.disabled = true;
-    send.textContent = 'Enviando…';
+    send.textContent = '…';
     feedback.textContent = 'Enviando mensagem…';
     try {
       await request('/team/messages', 'POST', payload, { signal: AbortSignal.timeout(15000) });
@@ -443,7 +423,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       if (current === session) { feedback.textContent = ''; fail(error, true); }
     } finally {
       if (current === session) {
-        sending = false; find('.team-chat-tools').inert = false; pending.inert = false; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
+        sending = false; find('.team-chat-tools').inert = false; pending.inert = false; input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
         if (panel.open) input.focus({ preventScroll: true });
       }
     }
@@ -476,9 +456,9 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     user = next;
     if (panel.open) panel.close();
     clearDrag();
-    attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending(); picker.open = false;
+    attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending();
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
-    input.value = ''; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
+    input.value = ''; input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
     log.replaceChildren(); older.hidden = true; empty.hidden = false; empty.textContent = 'Carregando mensagens…';
     errorBox.hidden = true; retrySend = false; feedback.textContent = '';
     liveCursor = 0; unreadCount = 0;
