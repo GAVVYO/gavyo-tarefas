@@ -27,7 +27,6 @@ test('atividade Web e MCP mantém eventos do webhook e ordena por instante', asy
     ? Promise.resolve(Response.json([old, recent].map(({ sha, at, message }) => ({ sha, commit: { message, author: { date: at } } }))))
     : originalFetch(url, options));
   const server = createApp(store).listen(0, '127.0.0.1');
-  t.after(() => new Promise((resolve) => server.close(resolve)));
   await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
 
@@ -38,7 +37,13 @@ test('atividade Web e MCP mantém eventos do webhook e ordena por instante', asy
 
   const mcp = await store.issue(member.id, 'Codex', 1);
   const client = new Client({ name: 'teste', version: '1.0.0' });
-  t.after(() => client.close());
+  t.after(async () => {
+    await client.close();
+    await new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+  });
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${mcp.token}` } }
   }));
