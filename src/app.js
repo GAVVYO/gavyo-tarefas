@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { AppError, pinInput, sources } from './store.js';
 import { serveMcp } from './mcp.js';
+import { recentCommits } from './github.js';
 
 const file = (path) => fileURLToPath(new URL(path, import.meta.url));
 const credential = (req) => /(?:^|;\s*)gavyo_session=([\w-]{43})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
@@ -19,7 +20,7 @@ const IMAGE_TYPES = {
 };
 const MAX_IMAGE = 8 * 1024 * 1024;
 
-export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads' } = {}) {
+export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits } = {}) {
   const uploadRoot = resolve(uploads);
   const presence = new Map();
   const app = express();
@@ -173,6 +174,14 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.get('/api/projects/:id/context', async (req, res) => res.json(await store.projectContext(z.uuid().parse(req.params.id))));
   app.put('/api/projects/:id/context', async (req, res) =>
     res.json(await store.setProjectContext(z.uuid().parse(req.params.id), req.body, req.actor)));
+  app.get('/api/projects/:id/activity', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const ctx = await store.projectContext(id);
+    const github = await commits(ctx.repositorio, ctx.branch);
+    res.json({ items: await store.projectActivity(id, github.commits), note: github.note, version: ctx.version });
+  });
+  app.get('/api/projects/:id/messages', async (req, res) => res.json(await store.projectMessages(z.uuid().parse(req.params.id))));
+  app.post('/api/projects/:id/messages', async (req, res) => res.json(await store.addProjectMessage(z.uuid().parse(req.params.id), req.body, req.actor)));
   app.get('/api/projects/:id/context/history', async (req, res) => res.json(await store.contextHistory(z.uuid().parse(req.params.id))));
   app.post('/api/projects/:id/context/restore/:version', async (req, res) =>
     res.json(await store.restoreContext(z.uuid().parse(req.params.id), z.coerce.number().int().min(1).parse(req.params.version), req.body, req.actor)));

@@ -204,7 +204,7 @@ async function refresh({ shell = false } = {}) {
 }
 
 function projectHeading() {
-  return (view === 'board' || view === 'context') && board.projects.length > 1
+  return view === 'board' && board.projects.length > 1
     ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
     : escape({ board: board.projects[0]?.name || 'Quadro', context: board.projects[0]?.name || 'Contexto', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
 }
@@ -234,10 +234,10 @@ function renderShell() {
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
       ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
-      ${button('Contexto', 'context', 'book-open', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
+      ${button('Central de projetos', 'context', 'folder-kanban', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
     </nav>
   </header>
-  <section class="heading">
+  <section class="heading" ${view === 'context' ? 'hidden' : ''}>
     <div><h1>${projectHeading()}</h1>
       <p id="scope-summary" class="muted"></p>
     </div>
@@ -457,8 +457,14 @@ function contextBlock(text) {
 
 const CONTEXT_LABELS = { resumo: 'O que é', objetivo: 'No que estamos agora', regras: 'Como trabalhamos', decisoes: 'Decisões', stack: 'Stack',
   links: 'Links', responsavelId: 'Responsável', producao: 'Produção', teste: 'Teste', repositorio: 'Repositório', branch: 'Branch' };
-let contextView = 'page';
-let contextCache = null;
+let hubSector = 'atividade';
+let hubData = null;
+let hubOpen = null;
+let hubCite = null;
+let hubPicking = false;
+let hubTimer = 0;
+let hubPainted = '';
+const HUB_SECTORS = [['atividade', 'Atividade', 'git-commit-horizontal'], ['contexto', 'Contexto', 'book-open'], ['financeiro', 'Financeiro', 'wallet']];
 
 /** Quem mexeu, por qual canal, quando e qual versão leu. */
 function signature(by, compact = false) {
@@ -478,16 +484,283 @@ function nextStep(id) {
 
 function hostOf(url) { return url.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 
+/* ---------- Central de projetos ---------- */
+function renderHub(content) {
+  const id = projectId;
+  if (!id) { content.innerHTML = '<p class="empty">Crie um projeto para começar.</p>'; return; }
+  if (content.querySelector('.hub')?.dataset.project !== id) {
+    hubData = null; hubOpen = null; hubCite = null; hubPainted = '';
+    content.innerHTML = `<div class="hub" data-project="${id}">
+      <div class="hub-top">
+        <div class="segmented" role="tablist" aria-label="Setor do projeto">
+          <span class="segmented-thumb" aria-hidden="true"></span>
+          ${HUB_SECTORS.map(([key, label, glyph]) => `<button type="button" role="tab" id="hub-tab-${key}" class="segmented-item" data-action="hub-sector"
+            data-sector="${key}" aria-controls="hub-panel" aria-selected="false" tabindex="-1">${icon(glyph)}<span>${label}</span></button>`).join('')}
+        </div>
+        <label class="hub-project"><span class="sr-only">Projeto</span>
+          <select id="project">${projectOptions(id)}</select>${icon('chevron-down')}</label>
+      </div>
+      <div class="hub-panel" id="hub-panel" role="tabpanel"></div>
+    </div>`;
+  }
+  const hub = content.querySelector('.hub');
+  hub.dataset.sector = hubSector;
+  HUB_SECTORS.forEach(([key], index) => {
+    const tab = hub.querySelector(`#hub-tab-${key}`);
+    tab.setAttribute('aria-selected', String(key === hubSector));
+    tab.tabIndex = key === hubSector ? 0 : -1;
+    if (key === hubSector) hub.querySelector('.segmented').style.setProperty('--thumb', index);
+  });
+  const panel = hub.querySelector('#hub-panel');
+  panel.setAttribute('aria-labelledby', `hub-tab-${hubSector}`);
+  if (hubSector !== 'atividade') clearTimeout(hubTimer);
+  if (hubSector === 'contexto') { if (!contextEditing) void renderContext(panel); return; }
+  if (hubSector === 'financeiro') {
+    panel.innerHTML = `<div class="hub-soon">${icon('wallet')}<h2>Financeiro do projeto</h2>
+      <p>Gastos com domínio, hospedagem e APIs, quem pagou e quanto cada sócio precisa acertar. Chega na próxima etapa.</p></div>`;
+    return;
+  }
+  if (!panel.querySelector('.hub-activity')) {
+    panel.innerHTML = `<div class="hub-activity">
+      <section class="hub-tree" aria-labelledby="hub-tree-title">
+        <h2 id="hub-tree-title" class="sr-only">Linha do tempo do projeto</h2>
+        <p class="hub-note" hidden></p>
+        <div class="hub-tree-list" aria-busy="true"></div>
+      </section>
+      <aside class="hub-chat" aria-labelledby="hub-chat-title">
+        <h2 id="hub-chat-title">Mensagens</h2>
+        <ol class="chat" aria-live="polite"></ol>
+        <p class="hub-drop-hint" aria-hidden="true">${icon('reply')}Solte para responder</p>
+      </aside>
+      <form class="hub-composer" data-form="hub-message">
+        <div class="hub-cite" hidden></div>
+        <div class="hub-input">
+          <button type="button" class="hub-plus" data-action="hub-plus" aria-pressed="false" aria-label="Citar um item da linha do tempo">${icon('plus')}</button>
+          <textarea name="text" rows="1" maxlength="4000" aria-label="Mensagem para o projeto" placeholder="Escreva para a equipe e os assistentes…"></textarea>
+          <button class="hub-send" aria-label="Enviar mensagem">${icon('arrow-up')}</button>
+        </div>
+        <div class="error" role="alert"></div>
+      </form>
+    </div>`;
+    hubPainted = '';
+  }
+  paintHub(panel);
+  void loadHub(id);
+}
+
+async function loadHub(id) {
+  clearTimeout(hubTimer);
+  try {
+    const [activity, messages, history] = await Promise.all([
+      request(`/projects/${id}/activity`), request(`/projects/${id}/messages`), request(`/projects/${id}/context/history`)]);
+    if (id !== projectId) return;
+    hubData = { id, ...activity, messages, history };
+    const panel = document.querySelector('#hub-panel');
+    if (panel && view === 'context' && hubSector === 'atividade') paintHub(panel);
+  } catch (error) {
+    message(error.message);
+  } finally {
+    if (view === 'context' && hubSector === 'atividade') hubTimer = setTimeout(() => loadHub(projectId), document.hidden ? 30000 : 8000);
+  }
+}
+
+const HUB_ICONS = { commit: 'git-commit-horizontal', contexto: 'file-pen-line', cartao: 'square-kanban' };
+const dayOf = (iso) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Fortaleza' });
+function dayLabel(iso) {
+  const day = dayOf(iso);
+  if (day === dayOf(new Date().toISOString())) return 'Hoje';
+  if (day === dayOf(new Date(Date.now() - 864e5).toISOString())) return 'Ontem';
+  return new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Fortaleza', weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+/** Rótulo curto de um item (para citação no chat). */
+function hubLabel(item) {
+  if (item.kind === 'commit') return `${item.short} · ${item.message.split('\n')[0].slice(0, 80)}`;
+  if (item.kind === 'contexto') return item.rejected ? `Contexto recusado (${item.by.actor})` : `Contexto v${item.version}`;
+  return `${item.key || 'Cartão'} · ${item.title}`.slice(0, 120);
+}
+
+function readStatus(item) {
+  if (item.kind === 'contexto') {
+    if (item.rejected) return `<span class="tree-read" data-ok="false">${icon('circle-x')}Recusado: leu a v${item.readVersion}, já era a v${item.version}</span>`;
+    return item.version > 1 ? `<span class="tree-read" data-ok="true">${icon('circle-check')}Leu a v${item.readVersion} antes de editar</span>` : '';
+  }
+  if (item.kind === 'cartao' && 'readVersion' in item) return item.readVersion === null
+    ? `<span class="tree-read" data-ok="false">${icon('circle-alert')}Não leu o contexto antes</span>`
+    : `<span class="tree-read" data-ok="true">${icon('circle-check')}Leu o contexto v${item.readVersion}</span>`;
+  return '';
+}
+
+/** "Comentário" vira "comentou em"; "Moveu para…" fica como está; o resto vira "mudou … em". */
+function cardVerb(action) {
+  const text = String(action || '').trim();
+  if (/^coment/i.test(text)) return 'comentou em';
+  const first = text.split(/[\s,]/)[0];
+  if (/(ou|eu|iu)$/i.test(first)) return `${text.charAt(0).toLocaleLowerCase('pt-BR')}${text.slice(1)}${/ (em|no|na|o cartão)$/i.test(text) ? '' : ' ·'}`;
+  return `mudou ${text.toLocaleLowerCase('pt-BR')} em`;
+}
+
+function treeItem(item) {
+  const who = memberNamed(item.by.actor);
+  const what = item.kind === 'commit' ? `commitou <span class="tree-what">${escape(item.message.split('\n')[0])}</span>`
+    : item.kind === 'contexto' ? (item.rejected ? 'tentou editar o contexto' : `editou o contexto <span class="tree-what">${item.changed.map((key) => CONTEXT_LABELS[key]).join(', ')}</span>`)
+    : `${escape(cardVerb(item.action))} <span class="tree-what">${escape(item.key || '')} ${escape(item.title)}</span>`;
+  const meta = [
+    item.kind === 'commit' ? `<code>${escape(item.short)}</code>${item.branch ? `<span>${escape(item.branch)}</span>` : ''}` : '',
+    item.kind === 'contexto' && !item.rejected ? `<span>v${item.version}</span>` : '',
+    AGENTS.includes(item.by.source) || item.by.source === 'GitHub' ? `<span>${escape(item.by.source)}</span>` : '',
+    readStatus(item)
+  ].filter(Boolean).join('');
+  const open = hubOpen === item.id;
+  return `<li class="tree-item" data-kind="${item.kind}" data-id="${escape(item.id)}" data-open="${open}" draggable="true">
+    <span class="tree-node" aria-hidden="true">${icon(HUB_ICONS[item.kind])}</span>
+    <button type="button" class="tree-row" data-action="hub-inspect" data-id="${escape(item.id)}" aria-expanded="${open}" aria-controls="tree-detail-${escape(item.id)}">
+      <span class="tree-face">${who ? face(who, 'card-face') : `<span class="card-face nobody">${icon(item.by.source === 'GitHub' ? 'git-branch' : 'user-round')}</span>`}</span>
+      <span class="tree-text"><span class="tree-line"><b>${escape(item.by.actor)}</b> ${what}</span>${meta ? `<span class="tree-meta">${meta}</span>` : ''}</span>
+      <time datetime="${escape(item.at)}">${new Date(item.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Fortaleza' })}</time>
+    </button>
+    <div class="tree-detail" id="tree-detail-${escape(item.id)}" ${open ? '' : 'hidden'}>${open ? treeDetail(item) : ''}</div>
+  </li>`;
+}
+
+function treeDetail(item) {
+  const reply = button('Responder no chat', 'hub-reply', 'reply', 'ghost', `data-id="${escape(item.id)}"`);
+  if (item.kind === 'commit') return `<pre class="tree-commit">${escape(item.message)}</pre>
+    <div class="tree-actions">${reply}<a class="btn ghost" href="${escape(item.url)}" target="_blank" rel="noopener noreferrer">${icon('external-link')}Ver no GitHub</a></div>`;
+  if (item.kind === 'cartao') {
+    const exists = cardById(item.cardId);
+    return `<div class="tree-actions">${reply}${exists ? button('Abrir cartão', 'edit', 'square-arrow-out-up-right', 'ghost', `data-card="${item.cardId}"`) : '<span class="muted">O cartão foi apagado.</span>'}</div>`;
+  }
+  if (item.rejected) return `<p class="tree-explain">A gravação foi recusada porque ${escape(item.by.actor)} leu a v${item.readVersion}, mas o contexto já estava na v${item.version}. Nada foi alterado.</p><div class="tree-actions">${reply}</div>`;
+  const versions = (hubData?.history || []).filter((entry) => entry.kind === 'versao');
+  const picked = versions.find((entry) => entry.version === item.version);
+  const previous = versions.find((entry) => entry.version < item.version);
+  const nameOf = (key, value) => key === 'responsavelId' ? (board.members.find((member) => member.id === value)?.name || '') : value;
+  const diff = picked ? picked.changed.map((key) => `<h3>${CONTEXT_LABELS[key]}</h3><div class="ctx-diff">${
+    diffLines(nameOf(key, previous?.snapshot?.[key]), nameOf(key, picked.snapshot[key])).map(([kind, line]) =>
+      `<p data-diff="${kind}"><span class="sr-only">${kind === 'in' ? 'Entrou: ' : kind === 'out' ? 'Saiu: ' : ''}</span>${escape(line)}</p>`).join('') || '<p data-diff="same">(vazio)</p>'}</div>`).join('') : '';
+  return `${diff}<div class="tree-actions">${reply}${hubData && item.version < hubData.version
+    ? button(`Voltar para a v${item.version}`, 'context-restore', 'undo-2', 'ghost', `data-version="${item.version}"`) : ''}</div>`;
+}
+
+function chatItem(entry) {
+  const mine = entry.actor === board.user.name && entry.source === 'Web';
+  return `<li class="chat-msg" data-mine="${mine}" data-id="${entry.id}">
+    ${face(memberNamed(entry.actor), 'card-face')}
+    <div class="chat-body">
+      <p class="chat-by"><b>${escape(entry.actor)}</b>${agentMark(entry.source)}<time datetime="${escape(entry.at)}">${when(entry.at)}</time></p>
+      ${entry.ref ? `<button type="button" class="chat-ref" data-action="hub-goto" data-id="${escape(entry.ref.id)}">${icon(HUB_ICONS[entry.ref.kind] || 'quote')}<span>${escape(entry.ref.label)}</span></button>` : ''}
+      <p class="chat-text">${linkify(entry.text)}</p>
+    </div>
+  </li>`;
+}
+
+function paintHub(panel) {
+  const list = panel?.querySelector('.hub-tree-list');
+  if (!list) return;
+  const chat = panel.querySelector('.chat');
+  panel.querySelector('.hub-activity').dataset.picking = String(hubPicking);
+  panel.querySelector('.hub-plus').setAttribute('aria-pressed', String(hubPicking));
+  const cite = panel.querySelector('.hub-cite');
+  cite.hidden = !hubCite;
+  cite.innerHTML = hubCite ? `${icon(HUB_ICONS[hubCite.kind])}<span>Respondendo <b>${escape(hubCite.label)}</b></span>${iconButton('Tirar citação', 'hub-uncite', 'x')}` : '';
+  if (!hubData) return;
+  const paintKey = JSON.stringify([hubData.items.map((item) => item.id), hubOpen, hubData.version]);
+  if (paintKey !== hubPainted) {
+    const first = !hubPainted;
+    hubPainted = paintKey;
+    const note = panel.querySelector('.hub-note');
+    note.hidden = !hubData.note;
+    note.textContent = hubData.note || '';
+    let day = '';
+    list.innerHTML = hubData.items.length ? `<ol class="tree" data-first="${first}">${hubData.items.map((item) => {
+      const label = dayLabel(item.at);
+      const head = label !== day ? `<li class="tree-day"><h3>${escape(label)}</h3></li>` : '';
+      day = label;
+      return head + treeItem(item);
+    }).join('')}</ol>` : `<div class="hub-empty">${icon('git-commit-horizontal')}<p>Nada aconteceu neste projeto ainda. Commits, mudanças no contexto e nos cartões aparecem aqui.</p></div>`;
+    list.removeAttribute('aria-busy');
+  }
+  const chatKey = hubData.messages.map((entry) => entry.id).join();
+  if (chat.dataset.key !== chatKey) {
+    const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+    const known = new Set((chat.dataset.key || '').split(','));
+    chat.innerHTML = hubData.messages.length ? hubData.messages.map(chatItem).join('')
+      : '<li class="chat-empty">Ninguém escreveu ainda. Arraste um item da linha do tempo para cá para comentar sobre ele.</li>';
+    if (chat.dataset.key !== undefined) for (const node of chat.querySelectorAll('.chat-msg')) if (!known.has(node.dataset.id)) node.dataset.new = 'true';
+    if (atBottom || chat.dataset.key === undefined) chat.scrollTop = chat.scrollHeight;
+    chat.dataset.key = chatKey;
+  }
+}
+
+function hubItem(id) { return hubData?.items.find((item) => item.id === id); }
+
+function setCite(id) {
+  const item = hubItem(id);
+  if (!item) return;
+  hubCite = { kind: item.kind, id: item.id, label: hubLabel(item) };
+  hubPicking = false;
+  const panel = document.querySelector('#hub-panel');
+  paintHub(panel);
+  panel.querySelector('.hub-composer textarea').focus();
+}
+
+/** Arrastar um item da linha do tempo para as mensagens cria uma resposta citando ele. */
+document.addEventListener('dragstart', (event) => {
+  const item = event.target.closest?.('.tree-item');
+  if (!item) return;
+  event.dataTransfer.setData('application/x-gavyo-item', item.dataset.id);
+  event.dataTransfer.effectAllowed = 'link';
+  document.querySelector('.hub-activity')?.setAttribute('data-dragging', 'true');
+});
+document.addEventListener('dragend', () => {
+  const zone = document.querySelector('.hub-activity');
+  zone?.removeAttribute('data-dragging');
+  zone?.removeAttribute('data-over');
+});
+document.addEventListener('dragover', (event) => {
+  const zone = event.target.closest?.('.hub-chat, .hub-composer');
+  if (!zone || !event.dataTransfer.types.includes('application/x-gavyo-item')) return;
+  event.preventDefault();
+  zone.closest('.hub-activity').dataset.over = 'true';
+});
+document.addEventListener('dragleave', (event) => {
+  if (event.target.closest?.('.hub-chat, .hub-composer') && !event.relatedTarget?.closest?.('.hub-chat, .hub-composer')) {
+    document.querySelector('.hub-activity')?.removeAttribute('data-over');
+  }
+});
+document.addEventListener('drop', (event) => {
+  const id = event.dataTransfer?.getData('application/x-gavyo-item');
+  if (!id || !event.target.closest?.('.hub-chat, .hub-composer')) return;
+  event.preventDefault();
+  document.querySelector('.hub-activity')?.removeAttribute('data-over');
+  setCite(id);
+});
+
+/** Setores: setas do teclado andam entre as abas, como no Mac. Esc cancela a citação. */
+document.addEventListener('keydown', (event) => {
+  const tab = event.target.closest?.('.segmented-item');
+  if (tab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const keys = HUB_SECTORS.map(([key]) => key);
+    const index = keys.indexOf(hubSector);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length;
+    hubSector = keys[next];
+    contextEditing = false;
+    renderContents();
+    document.querySelector(`#hub-tab-${hubSector}`)?.focus();
+  } else if (event.key === 'Escape' && (hubPicking || hubCite) && document.querySelector('.hub-activity') && !document.querySelector('dialog[open]')) {
+    if (hubPicking) hubPicking = false; else hubCite = null;
+    paintHub(document.querySelector('#hub-panel'));
+  }
+});
+
 async function renderContext(content) {
   const id = projectId;
   if (!id) { content.innerHTML = '<p class="empty">Crie um projeto para escrever o contexto.</p>'; return; }
   if (!content.querySelector('.ctx')) content.innerHTML = '<div class="ctx ctx-loading" aria-busy="true"></div>';
-  const [ctx, history] = await Promise.all([
-    request(`/projects/${id}/context`), request(`/projects/${id}/context/history`)
-  ]).catch((error) => { message(error.message); return []; });
-  if (!ctx || view !== 'context' || id !== projectId || contextEditing) return;
-  contextCache = { id, ctx, history };
-  if (contextView === 'history') { renderContextHistory(content); return; }
+  const ctx = await request(`/projects/${id}/context`).catch((error) => { message(error.message); return null; });
+  if (!ctx || view !== 'context' || hubSector !== 'contexto' || id !== projectId || contextEditing) return;
   const project = board.projects.find((item) => item.id === id);
   const all = board.cards.filter((card) => card.projectId === id);
   const step = nextStep(id);
@@ -500,15 +773,13 @@ async function renderContext(content) {
     ${ctx[key]?.trim() ? `<div class="ctx-text">${contextBlock(ctx[key])}</div>`
       : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="${key}">${icon('plus')}${hint}</button>`}
   </section>`;
-  const changes = history.slice(0, 5).map((entry) => `<li class="ctx-change" data-kind="${entry.kind}">${signature(entry.by)}
-    <small>${entry.kind === 'recusado' ? `Recusado: leu a v${entry.readVersion}, já era a v${entry.version}` : `v${entry.version} · ${entry.changed.map((key) => CONTEXT_LABELS[key]).join(', ') || entry.by.action}`}</small></li>`).join('');
   content.innerHTML = `<div class="ctx" data-project="${id}">
     <header class="ctx-hero">
       <div class="ctx-hero-text">
         ${ctx.resumo?.trim() ? `<p>${linkify(ctx.resumo.trim().split(/\n{2,}/)[0])}</p>` : ''}
       </div>
       <div class="ctx-hero-actions">
-        ${button(`Histórico${ctx.version ? ` · v${ctx.version}` : ''}`, 'context-history', 'history', 'ghost')}
+        <span class="ctx-version-note">Versão ${ctx.version}${ctx.updated ? ` · ${escape(ctx.updated.actor)}, ${when(ctx.updated.at)}` : ''}</span>
         ${button('Editar contexto', 'context-edit', 'pencil', 'primary')}
       </div>
     </header>
@@ -528,8 +799,6 @@ async function renderContext(content) {
       <div class="ctx-main">${CONTEXT_PARTS.filter(([key]) => key !== 'resumo').map(([key, title, hint, glyph]) => section(key, title, hint, glyph)).join('')}
         ${ctx.resumo?.trim() ? '' : section('resumo', 'O que é', CONTEXT_PARTS[0][2], 'compass')}</div>
       <aside class="ctx-side">
-        ${changes ? `<section class="ctx-card ctx-changes"><header class="ctx-card-head"><h2><span class="ctx-icon">${icon('history')}</span>Últimas mudanças</h2>
-          <button type="button" class="ctx-more" data-action="context-history">Ver tudo</button></header><ul>${changes}</ul></section>` : ''}
         <section class="ctx-card ctx-agents">
           <h2><span class="ctx-icon">${icon('bot')}</span>Para os assistentes</h2>
           <p>Claude e Codex leem esta página pelo MCP. Para editar, precisam dizer qual versão leram; se estiver velha, a gravação é recusada.</p>
@@ -556,40 +825,8 @@ function diffLines(before = '', after = '') {
     ...now.map((line) => [old.includes(line) ? 'same' : 'in', line])];
 }
 
-let historyPick = null;
-function renderContextHistory(content) {
-  const { id, ctx, history } = contextCache;
-  const versions = history.filter((entry) => entry.kind === 'versao');
-  const picked = history.find((entry) => entry.kind === 'versao' && entry.version === historyPick) || versions[0];
-  const previous = picked && versions.find((entry) => entry.version < picked.version);
-  const nameOf = (key, value) => key === 'responsavelId' ? (board.members.find((member) => member.id === value)?.name || '') : value;
-  const diff = picked ? picked.changed.map((key) => `<h3>${CONTEXT_LABELS[key]}</h3><div class="ctx-diff">${
-    diffLines(nameOf(key, previous?.snapshot?.[key]), nameOf(key, picked.snapshot[key])).map(([kind, line]) => `<p data-diff="${kind}">${kind === 'in' ? '+ ' : ''}${escape(line)}</p>`).join('') || '<p data-diff="same">(vazio)</p>'}</div>`).join('') : '';
-  content.innerHTML = `<div class="ctx ctx-history" data-project="${id}">
-    <header class="ctx-hero">
-      <div class="ctx-hero-text"><h1>Histórico do contexto</h1></div>
-      <div class="ctx-hero-actions">${button('Voltar ao contexto', 'context-page', 'arrow-left', 'ghost')}</div>
-    </header>
-    ${history.length ? `<div class="ctx-history-grid">
-      <ol class="ctx-versions">${history.map((entry) => entry.kind === 'versao'
-        ? `<li><button type="button" class="ctx-version" data-action="context-pick" data-version="${entry.version}" aria-current="${entry === picked}">
-          <span class="ctx-version-top"><strong>v${entry.version} · ${escape(entry.by.actor)}</strong><small>${when(entry.by.at)}</small></span>
-          <small>${entry.changed.map((key) => CONTEXT_LABELS[key]).join(', ') || escape(entry.by.action)} · ${AGENTS.includes(entry.by.source) ? `via ${entry.by.source}` : 'Web'}</small>
-          ${Number.isInteger(entry.readVersion) && entry.version > 1 ? `<span class="ctx-badge" data-ok="true">${icon('check')}leu a v${entry.readVersion} antes de editar</span>` : ''}</button></li>`
-        : `<li class="ctx-version" data-kind="recusado"><span class="ctx-version-top"><strong>Recusado · ${escape(entry.by.actor)}</strong><small>${when(entry.by.at)}</small></span>
-          <small>Tentou salvar lendo a v${entry.readVersion}, mas já existia a v${entry.version}</small>
-          <span class="ctx-badge" data-ok="false">${icon('x')}precisou ler de novo</span></li>`).join('')}</ol>
-      ${picked ? `<article class="ctx-card ctx-diff-card">
-        <header class="ctx-card-head"><div><h2>O que mudou na v${picked.version}</h2>${signature({ ...picked.by, readVersion: picked.readVersion })}</div>
-        ${picked.version < ctx.version ? button(`Voltar para a v${picked.version}`, 'context-restore', 'undo-2', 'ghost', `data-version="${picked.version}"`) : '<small class="ctx-current">versão atual</small>'}</header>
-        ${diff || '<p class="ctx-sign">Nada mudou nesta versão.</p>'}
-      </article>` : ''}
-    </div>` : '<p class="empty">Ninguém editou o contexto ainda.</p>'}
-  </div>`;
-}
-
 async function editContext(focusKey) {
-  const content = document.querySelector('#content');
+  const content = document.querySelector('#hub-panel');
   const id = projectId;
   const ctx = await request(`/projects/${id}/context`);
   contextEditing = true;
@@ -640,8 +877,7 @@ function renderContents() {
   if (!content) return;
   if (view === 'context') {
     document.querySelector('#mural-slot').innerHTML = '';
-    document.querySelector('#scope-summary').textContent = 'O que a equipe e os assistentes precisam saber antes de começar.';
-    if (!contextEditing) void renderContext(content);
+    if (!contextEditing || !content.querySelector('.hub')) renderHub(content);
     return;
   }
   const needle = search.trim().toLocaleLowerCase('pt-BR');
@@ -1320,7 +1556,7 @@ document.addEventListener('keydown', async (event) => {
 
 // Título e descrição: escreve no lugar e grava ao sair do campo.
 document.addEventListener('input', (event) => {
-  if (event.target.matches?.('.title-input, .desc-input, .composer textarea')) autoGrow(event.target);
+  if (event.target.matches?.('.title-input, .desc-input, .composer textarea, .hub-composer textarea')) autoGrow(event.target);
 });
 document.addEventListener('focusout', async (event) => {
   const box = event.target.closest?.('[data-field]');
@@ -1351,7 +1587,7 @@ document.addEventListener('keydown', async (event) => {
 
 // No chat: Enter envia, Shift+Enter pula linha.
 document.addEventListener('keydown', (event) => {
-  const box = event.target.closest?.('.composer textarea');
+  const box = event.target.closest?.('.composer textarea, .hub-composer textarea');
   if (box && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     if (box.value.trim()) box.form.requestSubmit();
@@ -1515,18 +1751,36 @@ document.addEventListener('click', async (event) => {
       if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
     } else if (action === 'context-edit') {
       await editContext(control.dataset.focus);
-    } else if (action === 'context-history' || action === 'context-page') {
-      contextView = action === 'context-history' ? 'history' : 'page';
-      historyPick = null;
+    } else if (action === 'hub-sector') {
+      hubSector = control.dataset.sector;
+      contextEditing = false;
       renderContents();
-    } else if (action === 'context-pick') {
-      historyPick = Number(control.dataset.version);
-      renderContextHistory(document.querySelector('#content'));
+    } else if (action === 'hub-inspect') {
+      if (hubPicking) { setCite(control.dataset.id); return; }
+      hubOpen = hubOpen === control.dataset.id ? null : control.dataset.id;
+      paintHub(document.querySelector('#hub-panel'));
+      document.querySelector(`.tree-row[data-id="${CSS.escape(control.dataset.id)}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'hub-reply') {
+      setCite(control.dataset.id);
+    } else if (action === 'hub-plus') {
+      hubPicking = !hubPicking;
+      paintHub(document.querySelector('#hub-panel'));
+      if (hubPicking) { message('Clique num item da linha do tempo para citar. Esc cancela.'); document.querySelector('.tree-row')?.focus(); }
+    } else if (action === 'hub-uncite') {
+      hubCite = null;
+      paintHub(document.querySelector('#hub-panel'));
+      document.querySelector('.hub-composer textarea')?.focus();
+    } else if (action === 'hub-goto') {
+      if (!hubItem(control.dataset.id)) { message('Esse item saiu da linha do tempo.'); return; }
+      hubOpen = control.dataset.id;
+      paintHub(document.querySelector('#hub-panel'));
+      const row = document.querySelector(`.tree-row[data-id="${CSS.escape(control.dataset.id)}"]`);
+      row?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      row?.focus({ preventScroll: true });
     } else if (action === 'context-restore') {
-      const { id, ctx } = contextCache;
-      const saved = await request(`/projects/${id}/context/restore/${control.dataset.version}`, 'POST', { versaoLida: ctx.version });
-      contextView = 'page';
-      renderContents();
+      const saved = await request(`/projects/${hubData.id}/context/restore/${control.dataset.version}`, 'POST', { versaoLida: hubData.version });
+      hubOpen = null;
+      await loadHub(hubData.id);
       message(`Voltou para a v${control.dataset.version} (agora é a v${saved.version}).`);
     } else if (action === 'context-cancel') {
       contextEditing = false;
@@ -1632,6 +1886,18 @@ document.addEventListener('submit', async (event) => {
         form.reset();
         form.querySelector('[name=comment]').focus();
       }
+    } else if (kind === 'hub-message') {
+      const box = form.elements.text;
+      if (!box.value.trim()) return;
+      const entry = await request(`/projects/${hubData?.id || projectId}/messages`, 'POST', { text: box.value, ref: hubCite });
+      box.value = '';
+      autoGrow(box);
+      hubCite = null;
+      if (hubData) hubData.messages.push(entry);
+      paintHub(document.querySelector('#hub-panel'));
+      const chat = document.querySelector('.chat');
+      chat.scrollTop = chat.scrollHeight;
+      box.focus();
     } else if (kind === 'context') {
       const links = [...form.querySelectorAll('.ctx-link-row')].map((row) => ({
         title: row.querySelector('[name=link-title]').value.trim(), url: row.querySelector('[name=link-url]').value.trim()

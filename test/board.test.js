@@ -62,7 +62,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 8);
+  assert.equal((await client.listTools()).tools.length, 10);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
@@ -87,6 +87,16 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   const log = (await request(`/api/projects/${project.id}/context/history`, { headers })).body;
   assert.deepEqual(log.map((entry) => entry.kind).slice(0, 4), ['recusado', 'recusado', 'versao', 'versao']);
   assert.equal(log[2].by.source, 'Web');
+  // Central de projetos: a leitura da IA fica marcada; a conversa aceita pessoas e assistentes.
+  await call('ver_contexto_projeto', { projectId: project.id });
+  await call('enviar_mensagem_projeto', { projectId: project.id, text: 'Li o contexto e subi o ajuste.', ref: { kind: 'contexto', id: 'x', label: 'v2' } });
+  const conversa = await request(`/api/projects/${project.id}/messages`, { method: 'POST', headers, body: { text: 'Valeu!' } });
+  assert.equal(conversa.status, 200);
+  const mensagens = (await request(`/api/projects/${project.id}/messages`, { headers })).body;
+  assert.deepEqual(mensagens.map((item) => item.source), ['Codex', 'Web']);
+  const atividade = (await request(`/api/projects/${project.id}/activity`, { headers })).body;
+  assert.ok(atividade.items.some((item) => item.kind === 'contexto' && item.rejected));
+  assert.ok(!(await request(`/api/projects/${project.id}/context/history`, { headers })).body.some((item) => item.kind === 'leitura'));
   const voltou = await request(`/api/projects/${project.id}/context/restore/1`, { method: 'POST', headers, body: { versaoLida: 2 } });
   assert.equal(voltou.body.regras, '');
   assert.equal(voltou.body.version, 3);

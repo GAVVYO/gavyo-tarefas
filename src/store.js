@@ -300,6 +300,7 @@ export function createStore({ query }) {
    * Cada gravação vira uma versão com autor, canal, hora e a versão que a pessoa
    * (ou a IA) leu antes. Se alguém salvou no meio-tempo, a gravação é recusada.
    */
+  const AGENT_SOURCES = ['Codex', 'Claude'];
   const CONTEXT_SECTIONS = ['resumo', 'objetivo', 'regras', 'stack', 'decisoes'];
   const httpUrl = z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.');
   const contextInput = z.object({
@@ -359,8 +360,58 @@ export function createStore({ query }) {
   }
   async function contextHistory(projectId) {
     await contextRow(projectId);
-    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 200', [projectId]);
-    return rows.map((row) => JSON.parse(row.data));
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    return rows.map((row) => JSON.parse(row.data)).filter((entry) => entry.kind !== 'leitura');
+  }
+  /** Registra que alguém leu o contexto (o MCP chama ao ler). Uma marca por pessoa e versão. */
+  async function markContextRead(projectId, actor) {
+    const current = await projectContext(projectId);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    const seen = rows.map((row) => JSON.parse(row.data)).some((entry) => entry.kind === 'leitura' &&
+      entry.by.actor === actor.name && entry.by.source === actor.source && entry.version === current.version);
+    if (!seen) await logContext(projectId, { kind: 'leitura', by: event(actor, 'Leu o contexto'), version: current.version });
+    return current;
+  }
+
+  /** Linha do tempo do projeto: contexto, cartões e commits, do mais novo para o mais velho. */
+  async function projectActivity(projectId, commits = []) {
+    await contextRow(projectId);
+    const rows = await query('SELECT id, data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    const log = rows.map((row) => ({ id: row.id, ...JSON.parse(row.data) }));
+    const reads = log.filter((entry) => entry.kind === 'leitura');
+    /** Última leitura do contexto pela mesma pessoa/canal antes de um momento. */
+    const readBefore = (by) => reads.find((entry) => entry.by.actor === by.actor && entry.by.source === by.source && entry.by.at <= by.at);
+    const items = log.filter((entry) => entry.kind !== 'leitura').map((entry) => ({
+      kind: 'contexto', id: entry.id, at: entry.by.at, by: entry.by, rejected: entry.kind === 'recusado',
+      version: entry.version, readVersion: entry.readVersion, changed: entry.changed || []
+    }));
+    for (const card of await readCards(projectId)) {
+      card.history.forEach((entry, index) => {
+        const read = AGENT_SOURCES.includes(entry.source) ? readBefore(entry) : undefined;
+        items.push({ kind: 'cartao', id: `${card.id}:${index}`, at: entry.at, by: entry, cardId: card.id, key: card.key, title: card.title,
+          action: entry.action, ...(AGENT_SOURCES.includes(entry.source) ? { readVersion: read ? read.version : null } : {}) });
+      });
+    }
+    for (const commit of commits) items.push({ kind: 'commit', id: `commit:${commit.sha}`, ...commit });
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+  }
+
+  const messageInput = z.object({
+    text: z.string().trim().min(1, 'Escreva a mensagem.').max(4000),
+    ref: z.object({ kind: z.enum(['commit', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).nullable().optional()
+  });
+  async function projectMessages(projectId) {
+    await contextRow(projectId);
+    const rows = await query('SELECT data FROM project_messages WHERE project_id = ? ORDER BY at DESC LIMIT 200', [projectId]);
+    return rows.map((row) => JSON.parse(row.data)).reverse();
+  }
+  async function addProjectMessage(projectId, input, actor) {
+    await contextRow(projectId);
+    const { text, ref } = messageInput.parse(input);
+    const message = { id: randomUUID(), text, ref: ref || null, ...event(actor, 'Mensagem') };
+    delete message.action;
+    await query('INSERT INTO project_messages (id, project_id, at, data) VALUES (?, ?, ?, ?)', [message.id, projectId, Date.now(), JSON.stringify(message)]);
+    return message;
   }
   async function restoreContext(projectId, version, input, actor) {
     const row = await contextRow(projectId);
@@ -373,5 +424,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, projectMessages, addProjectMessage, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }
