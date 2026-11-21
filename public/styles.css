@@ -1683,3 +1683,8 @@ dialog .dialog-head .menu summary,dialog .task-head .menu summary{width:34px;hei
 dialog .dialog-head .btn.ghost,dialog .ficha-actions .btn.ghost{min-height:34px}
 @media(pointer:coarse){.filters .btn.primary{min-height:44px}.composer-send{width:44px;height:44px}}
 .inspector-nav .btn{min-height:34px}
+button.chip-prop{cursor:pointer;font:inherit;font-size:.857rem;font-weight:600}
+.step-row .step-edit{opacity:0}
+.step-row:hover .step-edit,.step-row:focus-within .step-edit{opacity:1}
+.step-input{flex:1;min-width:0;min-height:30px;padding:4px 8px;border-radius:4px;background:var(--well);border:1px solid #e9bf6e66;color:var(--ink);font:inherit}
+@media(pointer:coarse){.step-row .step-edit{opacity:1}}

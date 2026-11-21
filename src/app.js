@@ -157,15 +157,15 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   });
   app.use('/api/avatar-assets', express.static(file('../assets/avatars/'), { index: false, maxAge: '7d', setHeaders: privateCache }));
   app.get('/api/board', async (req, res) => {
-    const [projects, members, preferences, versions] = await Promise.all([
-      store.projects(), store.members(), store.preferences(req.actor.id), store.cardVersions()
+    const [projects, members, preferences, versions, messages] = await Promise.all([
+      store.projects(), store.members(), store.preferences(req.actor.id), store.cardVersions(), store.latestMessages()
     ]);
-    const fingerprint = JSON.stringify([req.actor, projects, members, preferences, versions]);
+    const fingerprint = JSON.stringify([req.actor, projects, members, preferences, versions, messages]);
     const tag = `"${createHash('sha256').update(fingerprint).digest('base64url')}"`;
     res.set('ETag', tag);
     if (req.get('If-None-Match') === tag) return res.status(304).end();
     const { cards, archive } = await store.boardCards();
-    res.json({ user: req.actor, projects, members, cards, archive, preferences });
+    res.json({ user: req.actor, projects, members, cards, archive, preferences, messages });
   });
   app.post('/api/cards', async (req, res) => res.status(201).json(await store.createCard(req.body, req.actor)));
   app.patch('/api/cards/:id', async (req, res) => {
