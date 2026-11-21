@@ -72,7 +72,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 10);
+  assert.equal((await client.listTools()).tools.length, 15);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
@@ -97,6 +97,13 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   const log = (await request(`/api/projects/${project.id}/context/history`, { headers })).body;
   assert.deepEqual(log.map((entry) => entry.kind).slice(0, 4), ['recusado', 'recusado', 'versao', 'versao']);
   assert.equal(log[2].by.source, 'Web');
+  // MCP completo: membro comum não cria projeto; ver e mudar qualquer campo de uma tarefa funciona.
+  const semPermissao = await client.callTool({ name: 'criar_projeto', arguments: { name: 'Novo' } });
+  assert.ok(semPermissao.isError && /administradores/.test(semPermissao.content[0].text));
+  const nova = await call('criar_tarefa', { projectId: project.id, title: 'Pelo MCP' });
+  const mudada = await call('atualizar_tarefa', { id: nova.id, title: 'Renomeada', priority: 'alta', due: '2026-12-01', checklist: [{ title: 'um', done: false }] });
+  assert.equal(mudada.title, 'Renomeada');
+  assert.equal((await call('ver_tarefa', { id: nova.id })).checklist[0].title, 'um');
   // Central de projetos: a leitura da IA fica marcada; a conversa aceita pessoas e assistentes.
   await call('ver_contexto_projeto', { projectId: project.id });
   await call('enviar_mensagem_projeto', { projectId: project.id, text: 'Li o contexto e subi o ajuste.', ref: { kind: 'contexto', id: 'x', label: 'v2' } });

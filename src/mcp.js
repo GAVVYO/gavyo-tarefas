@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { AppError, newCard, status } from './store.js';
+import { AppError, newCard, patchCard, projectInput } from './store.js';
+import { recentCommits } from './github.js';
 
 export async function serveMcp(req, res, store, actor) {
   const server = new McpServer({ name: 'gavyo-tarefas', version: '1.0.0' });
@@ -46,10 +47,34 @@ export async function serveMcp(req, res, store, actor) {
     });
   add('criar_tarefa', 'Cria tarefa numa coluna A fazer. Use IDs de projeto e responsável obtidos pelas ferramentas de listagem.',
     newCard.shape, false, (input) => store.createCard(input, actor));
-  add('atualizar_tarefa', 'Atribui, move ou comenta uma tarefa existente. Etapas: todo (A fazer), doing (Em andamento), done (Concluído).',
-    { id: z.uuid(), assigneeId: z.uuid().nullable().optional(), status: status.optional(),
-      blocked: z.string().max(500).optional(), comment: z.string().min(1).max(2000).optional() },
-    false, ({ id, ...patch }) => store.updateCard(id, patch, actor));
+  add('atualizar_tarefa', 'Muda qualquer coisa de uma tarefa: título, descrição, responsável, prazo (AAAA-MM-DD), prioridade (alta/normal/baixa), etapa (todo, doing, done), travado (motivo; vazio destrava), passos (lista completa), arquivar (só concluídas) e comentário. Mande só o que muda.',
+    { id: z.uuid(), ...patchCard.shape }, false, ({ id, ...patch }) => store.updateCard(id, patch, actor));
+  add('ver_tarefa', 'Tudo de uma tarefa: descrição, passos, conversa, prints e histórico com autor e canal.',
+    { id: z.uuid() }, true, async ({ id }) => {
+      const card = (await store.listCards({})).concat(await store.listCards({ archived: true })).find((item) => item.id === id);
+      if (!card) throw new AppError(404, 'Tarefa não encontrada.');
+      return card;
+    });
+  add('atividade_projeto', 'Commits e PRs do GitHub do projeto (do repositório informado no contexto), do mais novo ao mais velho.',
+    { projectId: z.uuid() }, true, async ({ projectId }) => {
+      const ctx = await store.projectContext(projectId);
+      const [github, pushed] = await Promise.all([recentCommits(ctx.repositorio, ctx.branch), store.githubEvents(ctx.repositorio, ctx.branch)]);
+      const seen = new Set(pushed.map((item) => item.id));
+      const items = [...pushed, ...github.commits.map((item) => ({ kind: 'commit', id: `commit:${item.sha}`, ...item })).filter((item) => !seen.has(item.id))];
+      return { repositorio: ctx.repositorio, aviso: github.note || undefined, itens: items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 60) };
+    });
+  add('voltar_versao_contexto', 'Volta o contexto do projeto para uma versão anterior (vira uma versão nova). Exige versaoLida, como atualizar_contexto_projeto.',
+    { projectId: z.uuid(), version: z.number().int().min(1), versaoLida: z.number().int().min(0) },
+    false, ({ projectId, version, versaoLida }) => store.restoreContext(projectId, version, { versaoLida }, actor));
+  add('criar_projeto', 'Cria um projeto no quadro (só administrador).', projectInput.shape, false, (input) => {
+    if (actor.role !== 'admin') throw new AppError(403, 'Apenas administradores podem criar projetos.');
+    return store.createProject(input);
+  });
+  add('criar_membro', 'Cria o perfil de alguém da equipe (só administrador). PIN inicial 1234 se não informado; papel member ou admin.',
+    { name: z.string().min(1).max(100), role: z.enum(['admin', 'member']).optional(), pin: z.string().regex(/^[0-9]{4}$/).optional() }, false, (input) => {
+      if (actor.role !== 'admin') throw new AppError(403, 'Apenas administradores podem criar perfis.');
+      return store.createMember(input);
+    });
 
   const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
   res.on('close', () => { void server.close(); });
