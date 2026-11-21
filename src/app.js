@@ -149,6 +149,47 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   });
 
   app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
+  app.get('/api/team/messages/stream', async (req, res) => {
+    const cursor = req.get('Last-Event-ID') ?? req.query.after ?? '0';
+    let after = z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).parse(cursor);
+    res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store',
+      'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    res.write('retry: 1000\n\n');
+    let closed = false, draining = false, queued = false, heartbeat = 0;
+    const stop = () => { closed = true; clearInterval(timer); unsubscribe(); };
+    const drain = async () => {
+      if (closed) return;
+      if (draining) { queued = true; return; }
+      draining = true;
+      try {
+        do {
+          queued = false;
+          // A autorização continua valendo durante a conexão, não só na abertura.
+          if (!(await store.identity(credential(req), 'Web'))) { res.end(); stop(); return; }
+          const page = await store.teamMessages({ after, limit: 100 });
+          if (closed) return;
+          if (page.messages.length) {
+            after = page.nextAfter;
+            if (!res.write(`id: ${after}\nevent: messages\ndata: ${JSON.stringify(page.messages)}\n\n`)) {
+              // Cliente lento reconecta pelo último evento, sem acumular buffers.
+              res.end(); stop(); return;
+            }
+          }
+          queued ||= page.hasMore;
+        } while (queued && !closed);
+      } catch { res.end(); stop(); }
+      finally { draining = false; }
+    };
+    const unsubscribe = store.subscribeTeamMessages(() => void drain());
+    // Entrega local imediata; reconcilia também gravações de outros workers.
+    const timer = setInterval(() => {
+      if (++heartbeat % 15 === 0) res.write(': heartbeat\n\n');
+      void drain();
+    }, 1000);
+    res.on('close', stop);
+    void drain();
+  });
   app.post('/api/team/messages', async (req, res) => res.status(201).json(await store.addTeamMessage(req.body, req.actor)));
 
   app.post('/api/pin', async (req, res) => {

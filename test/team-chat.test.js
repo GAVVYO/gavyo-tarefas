@@ -78,3 +78,46 @@ test('GT-15: equipe autenticada envia e pagina o chat sem perder mensagens simul
   await request('/api/logout', a.cookie, {});
   assert.equal((await request('/api/team/messages', a.cookie)).status, 401);
 });
+
+test('GT-15: SSE entrega imediatamente, retoma cursor e encerra sessão revogada', async (t) => {
+  const db = await openDatabase({ path: ':memory:' });
+  const store = createStore(db);
+  const server = createApp(store).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const abort = new AbortController();
+  t.after(async () => { abort.abort(); server.closeAllConnections(); await new Promise(r => server.close(r)); await db.close(); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const member = await store.createMember({ name: 'Equipe SSE' });
+  const login = await fetch(origin + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(origin + '/api/team/messages/stream')).status, 401);
+  assert.equal((await fetch(origin + '/api/team/messages/stream?after=bad', { headers: { cookie } })).status, 400);
+  const first = await store.addTeamMessage({ text: 'Anterior', clientId: randomUUID() }, { ...member, source: 'Web' });
+  const response = await fetch(origin + '/api/team/messages/stream?after=0', { headers: { cookie, 'Last-Event-ID': String(first.sequence) }, signal: abort.signal });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/event-stream/);
+  assert.equal(response.headers.get('x-accel-buffering'), 'no');
+  const reader = response.body.getReader();
+  let buffer = '';
+  async function until(check) {
+    const deadline = setTimeout(() => abort.abort(), 3000);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) return 'closed';
+        buffer += new TextDecoder().decode(value);
+        if (check(buffer)) return buffer;
+      }
+    } finally { clearTimeout(deadline); }
+  }
+  const sent = await fetch(origin + '/api/team/messages', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Em tempo real', clientId: randomUUID() }) });
+  assert.equal(sent.status, 201);
+  const pushed = await until(s => s.includes('Em tempo real'));
+  assert.match(pushed, /event: messages/);
+  assert.ok(!pushed.includes('Anterior'), 'Last-Event-ID deve prevalecer sobre a URL da reconexão');
+  // Outro store/worker não partilha a assinatura em memória: o stream reconcilia pelo banco.
+  await createStore(db).addTeamMessage({ text: 'Outro worker', clientId: randomUUID() }, { ...member, source: 'Web' });
+  await until(s => s.includes('Outro worker'));
+  await fetch(origin + '/api/logout', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(await until(() => false), 'closed');
+});

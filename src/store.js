@@ -614,6 +614,11 @@ export function createStore({ query }) {
   }).strict().refine(q => q.before === undefined || q.after === undefined, 'Use before ou after, não os dois.');
   const chatInput = z.object({ text: text(4000), clientId: z.uuid() }).strict();
   const chatRow = row => ({ ...JSON.parse(row.data), sequence: Number(row.sequence) });
+  const chatListeners = new Set();
+  function subscribeTeamMessages(listener) {
+    chatListeners.add(listener);
+    return () => chatListeners.delete(listener);
+  }
   async function teamMessages(input) {
     const { limit, before, after } = chatQuery.parse(input);
     const ascending = after !== undefined;
@@ -639,7 +644,9 @@ export function createStore({ query }) {
       if (!previous || previous.author.id !== actor.id || previous.text !== text) throw new AppError(409, 'Identificador de mensagem já usado.');
       return previous;
     }
-    return chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
+    const saved = chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
+    for (const listener of chatListeners) listener();
+    return saved;
   }
   async function restoreContext(projectId, version, input, actor) {
     const row = await contextRow(projectId);
@@ -653,5 +660,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }

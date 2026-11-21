@@ -4,8 +4,8 @@ export function setupTeamChat({ request, onExpired }) {
   trigger.type = 'button';
   trigger.className = 'btn team-chat-trigger';
   trigger.textContent = 'Chat da equipe';
-  trigger.setAttribute('aria-label', 'Abrir chat da equipe (Ctrl+Shift+L)');
-  trigger.setAttribute('aria-keyshortcuts', 'Control+Shift+L');
+  trigger.setAttribute('aria-label', 'Abrir chat da equipe (Ctrl+Shift+Z)');
+  trigger.setAttribute('aria-keyshortcuts', 'Control+Shift+Z');
   trigger.setAttribute('aria-haspopup', 'dialog');
   trigger.setAttribute('aria-controls', 'team-chat');
   trigger.setAttribute('aria-expanded', 'false');
@@ -30,7 +30,7 @@ export function setupTeamChat({ request, onExpired }) {
   <form class="team-chat-form">
     <label for="team-chat-text">Mensagem para a equipe</label>
     <textarea id="team-chat-text" rows="3" maxlength="4000" required placeholder="Escreva sua mensagem…"></textarea>
-    <div><small class="muted">Ctrl+Shift+L abre o chat · Esc fecha</small><button class="btn primary" type="submit">Enviar mensagem</button></div>
+    <div><small class="muted">Enter envia · Shift+Enter quebra linha · Ctrl+Shift+Z abre o chat</small><button class="btn primary" type="submit">Enviar mensagem</button></div>
   </form>`;
   document.body.append(panel);
   const find = s => panel.querySelector(s);
@@ -43,7 +43,7 @@ export function setupTeamChat({ request, onExpired }) {
   const empty = find('.team-chat-empty');
   const feedback = find('.team-chat-feedback');
   const errorBox = find('.team-chat-error');
-  let user = null, previousFocus, timer, session = 0, reading = null, sending = false;
+  let user = null, previousFocus, stream, session = 0, reading = null, sending = false;
   let messages = [], hasOlder = false, retrySend = false, pendingMessage = null;
   let viewportCleanup;
   const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
@@ -104,9 +104,35 @@ export function setupTeamChat({ request, onExpired }) {
     empty.textContent = 'Ainda não há mensagens. Comece a conversa.';
   }
 
-  function schedule(delay = 2500) {
-    clearTimeout(timer);
-    if (user && panel.open) timer = setTimeout(() => void load(), document.hidden ? 10000 : delay);
+  function connect() {
+    if (stream || !user || !panel.open) return;
+    const current = session;
+    const source = new EventSource(`/api/team/messages/stream?after=${lastSequence() ?? 0}`);
+    stream = source;
+    source.addEventListener('messages', event => {
+      if (current !== session || stream !== source || !panel.open) return;
+      draw(JSON.parse(event.data));
+      if (!retrySend) errorBox.hidden = true;
+    });
+    source.onopen = () => {
+      if (current === session && !retrySend) {
+        errorBox.hidden = true;
+        if (feedback.textContent === 'Reconectando à conversa…') feedback.textContent = 'Conversa conectada.';
+      }
+    };
+    source.onerror = async () => {
+      if (stream !== source || current !== session) return;
+      if (!retrySend) feedback.textContent = 'Reconectando à conversa…';
+      try {
+        const state = await request('/session', 'GET', undefined, { signal: AbortSignal.timeout(10000) });
+        if (current === session && !state.signedIn) { setUser(null); onExpired(); }
+      } catch { /* EventSource reconecta sozinho e retoma pelo Last-Event-ID. */ }
+    };
+  }
+
+  function disconnect() {
+    stream?.close();
+    stream = null;
   }
 
   async function load(before = null) {
@@ -116,6 +142,7 @@ export function setupTeamChat({ request, onExpired }) {
     reading = marker;
     older.disabled = true;
     const after = lastSequence();
+    let more = false, loaded = false;
     try {
       const query = before ? `before=${before}` : after ? `after=${after}` : '';
       const page = await request(`/team/messages?${query}`, 'GET', undefined, { signal: AbortSignal.timeout(10000) });
@@ -127,13 +154,16 @@ export function setupTeamChat({ request, onExpired }) {
         older.hidden = !hasOlder;
       }
       draw(page.messages, Boolean(before));
-      if (!before && after !== undefined && page.hasMore) schedule(0);
-      else schedule();
+      more = !before && after !== undefined && page.hasMore;
+      loaded = true;
     } catch (error) {
-      if (current === session && panel.open) { fail(error, false); schedule(5000); }
+      if (current === session && panel.open) fail(error, false);
     } finally {
       if (reading === marker) reading = null;
       older.disabled = false;
+      if (loaded && current === session && panel.open) {
+        if (more) void load(); else connect();
+      }
     }
   }
 
@@ -167,7 +197,7 @@ export function setupTeamChat({ request, onExpired }) {
   }
 
   panel.addEventListener('close', () => {
-    clearTimeout(timer);
+    disconnect();
     viewportCleanup?.();
     trigger.hidden = !user;
     trigger.setAttribute('aria-expanded', 'false');
@@ -205,7 +235,7 @@ export function setupTeamChat({ request, onExpired }) {
       errorBox.hidden = true;
       retrySend = false;
       feedback.textContent = 'Mensagem enviada.';
-      schedule(0);
+      if (!stream && panel.open) void load();
     } catch (error) {
       if (current === session) { feedback.textContent = ''; fail(error, true); }
     } finally {
@@ -219,11 +249,14 @@ export function setupTeamChat({ request, onExpired }) {
 
   // Captura antes dos atalhos do cartão, menus e visualizador de prints.
   document.addEventListener('keydown', event => {
-    if (!user) return;
-    const shortcut = event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'l';
+    if (!user || event.isComposing) return;
+    const shortcut = event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z';
     if (shortcut) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (panel.open) panel.close(); else open();
+    } else if (panel.open && event.target === input && event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (!sending && input.value.trim()) form.requestSubmit();
     } else if (panel.open && event.key === 'Escape' && !event.isComposing) {
       event.preventDefault(); event.stopImmediatePropagation(); panel.close();
     } else if (panel.open) {
@@ -236,7 +269,7 @@ export function setupTeamChat({ request, onExpired }) {
     if (next?.id === user?.id) return;
     session++;
     reading = null;
-    clearTimeout(timer);
+    disconnect();
     user = next;
     if (panel.open) panel.close();
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
