@@ -13,7 +13,7 @@ dialog.addEventListener('close', () => { scrim.hidden = true; closeEditor(); voi
 // Com a ficha aberta, o resto da página fica inerte: Tab e leitor de tela não vão parar atrás do fundo escuro.
 new MutationObserver(() => { root.inert = dialog.open; }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
-const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
+const priorities = { alta: 'Urgente', normal: 'Normal', baixa: 'Baixa' };
 let board;
 let loginProfiles = [];
 let view = 'board';
@@ -251,7 +251,7 @@ function renderShell() {
     <div id="mural-slot" class="mural-slot"></div>
   </section>
   <div class="filters" ${view === 'context' ? 'hidden' : ''}>
-    ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
+    ${view !== 'archive' ? button('Travados', 'filter', 'octagon-pause', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
   </div>
@@ -910,7 +910,7 @@ function renderContents() {
   summary.textContent = view === 'archive'
     ? countLabel(scoped.length, 'cartão arquivado', 'cartões arquivados')
     : [countLabel(scoped.length, 'cartão', 'cartões'), countLabel(done, 'concluído', 'concluídos'),
-      countLabel(blocked, 'bloqueado', 'bloqueados')].join(' · ');
+      countLabel(blocked, 'travado', 'travados')].join(' · ');
   const filtering = Boolean(needle || (blockedOnly && view !== 'archive'));
   const emptyText = filtering ? 'Nenhum cartão com estes filtros.' : 'Nenhum cartão nesta etapa.';
   if (!board.projects.length && view === 'board') {
@@ -1013,12 +1013,12 @@ const memberNamed = (name) => board.members.find((member) => member.name === nam
 const agentMark = (source) => (AGENTS.includes(source)
   ? `<span class="card-agent" title="Feito pelo ${source}">${icon('bot')}<span>${source}</span></span>` : '');
 
-/** O que mudou, em frase: "mudou a etapa e mexeu no checklist". */
+/** O que mudou, em frase: "mudou a etapa e mexeu nos passos". */
 const ACTIONS = {
   'Criou o cartão': 'criou o cartão', Título: 'mudou o título', Descrição: 'mudou a descrição',
   Responsável: 'trocou o responsável', Prazo: 'mudou o prazo', Prioridade: 'mudou a prioridade',
-  Etapa: 'mudou a etapa', Bloqueio: 'mexeu no bloqueio', Arquivo: 'arquivou ou restaurou',
-  Checklist: 'mexeu no checklist', Comentário: 'comentou', Print: 'pôs um print', 'Tirou print': 'tirou um print'
+  Etapa: 'mudou a etapa', Bloqueio: 'mudou o travamento', Travado: 'mudou o travamento', Arquivo: 'arquivou ou restaurou',
+  Checklist: 'mexeu nos passos', Passos: 'mexeu nos passos', Comentário: 'comentou', Print: 'pôs um print', 'Tirou print': 'tirou um print'
 };
 function actionSentence(action) {
   const parts = action.split(', ').map((part) => ACTIONS[part] || part.toLowerCase());
@@ -1040,7 +1040,7 @@ function propChip(card, prop) {
     priority: card.priority === 'alta' ? `${icon('flag')}<span class="urgent-text">Urgente</span>` : `${icon('flag')}<span class="${card.priority === 'baixa' ? 'muted' : ''}">${priorities[card.priority]}</span>`,
     blocked: card.blocked ? `${icon('octagon-pause')}<span class="blocked-text">Travado</span>` : `${icon('octagon-pause')}<span class="muted">Travar</span>`
   }[prop];
-  const labels = { status: 'Etapa', assignee: 'Quem faz', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
+  const labels = { status: 'Etapa', assignee: 'Responsável', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
   return `<span class="chip-prop" data-prop="${prop}" title="${labels[prop]}">${content}</span>`;
 }
 
@@ -1214,9 +1214,9 @@ function showPopover(trigger) {
 
 /* ---------- Modo editar: a ficha vai para a esquerda, as opções descem em cascata à direita ---------- */
 const EDIT_OPTIONS = [
-  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Quem faz', 'user-round'],
+  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Responsável', 'user-round'],
   ['due', 'Prazo', 'calendar-days'], ['priority', 'Prioridade', 'flag'], ['status', 'Etapa', 'circle-dashed'],
-  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Imagem', 'image-plus']
+  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Prints', 'image-plus']
 ];
 let editor = null;
 let editorCloseTimer;

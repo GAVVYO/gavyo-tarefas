@@ -246,8 +246,8 @@ export function createStore({ query }) {
       }
       const labels = {
         title: 'Título', description: 'Descrição', assigneeId: 'Responsável', due: 'Prazo',
-        priority: 'Prioridade', status: 'Etapa', blocked: 'Bloqueio', archived: 'Arquivo',
-        checklist: 'Checklist'
+        priority: 'Prioridade', status: 'Etapa', blocked: 'Travado', archived: 'Arquivo',
+        checklist: 'Passos'
       };
       const actions = changes.map(([key]) => labels[key]);
       if (comment) {
