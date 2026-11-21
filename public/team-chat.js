@@ -259,6 +259,13 @@ export function setupTeamChat({ request, onExpired }) {
     if (previousFocus?.isConnected && !previousFocus.closest('[inert]')) previousFocus.focus({ preventScroll: true });
     else if (user) trigger.focus({ preventScroll: true });
   });
+  let backdropPress = false;
+  const outside = event => {
+    const rect = panel.getBoundingClientRect();
+    return event.target === panel && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
+  };
+  panel.addEventListener('pointerdown', event => { backdropPress = outside(event); });
+  panel.addEventListener('click', event => { if (backdropPress && outside(event)) panel.close(); backdropPress = false; });
   panel.addEventListener('cancel', event => { event.preventDefault(); panel.close(); });
   find('.team-chat-close').addEventListener('click', () => panel.close());
   trigger.addEventListener('click', open);
