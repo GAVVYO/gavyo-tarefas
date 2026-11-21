@@ -644,50 +644,6 @@ function linkify(text) {
     i % 2 ? `<a href="${escape(part)}" target="_blank" rel="noopener noreferrer">${escape(part)}</a>` : escape(part)).join('');
 }
 
-const editorSteps = [
-  ['title', 'Qual é a tarefa?', 'task'], ['description', 'O que precisa ser feito?', 'text'],
-  ['assignee', 'Quem vai fazer?', 'person'], ['due', 'Até quando?', 'date'],
-  ['priority', 'É urgente?', 'priority'], ['status', 'Em que etapa está?', 'stage'],
-  ['blocked', 'Tem algo travando?', 'block'], ['checklist', 'Quais são os passos?', 'checks']
-];
-
-function editArea(step, content, className = '') {
-  return `<button class="task-edit-area ${className}" type="button" data-action="task-section"
-    data-section="edit" data-step="${step}">${content}</button>`;
-}
-
-function taskOptions(name, options, selected) {
-  return `<div class="task-options">${options.map(([id, label, emblem]) => `<label class="task-option">
-    <input type="radio" name="${name}" value="${escape(id)}" ${id === selected ? 'checked' : ''}>
-    <span>${emblem}${escape(label)}</span>
-  </label>`).join('')}</div>`;
-}
-
-function editorPanels(card) {
-  const people = [['', 'Sem responsável', taskIcon('person')], ...board.members.map((member) => {
-    const avatar = avatarFor(member.name);
-    const emblem = avatar ? `<img class="editor-avatar" loading="lazy" src="/api/avatar-assets/${avatar}.png" alt="">`
-      : `<span class="avatar" aria-hidden="true">${escape(initialsOf(member.name))}</span>`;
-    return [member.id, member.name, emblem];
-  })];
-  const panels = {
-    title: `<input class="task-title-input" name="title" value="${escape(card.title)}" placeholder="Nome da tarefa" maxlength="160" aria-label="Título">`,
-    description: `<textarea class="task-writing" name="description" maxlength="8000" placeholder="Escreva o que precisa ser feito…" aria-label="Descrição">${escape(card.description)}</textarea>`,
-    assignee: taskOptions('assigneeId', people, card.assigneeId || ''),
-    due: `<input type="hidden" name="due" value="${card.due || ''}"><div class="task-calendar"></div>
-          ${button('Tirar prazo', 'task-clear-day', '', 'ghost')}`,
-    priority: taskOptions('priority', Object.entries(priorities).map(([id, label]) => [id, label, taskIcon('priority')]), card.priority),
-    status: card.archived ? '<p class="muted">Restaure o cartão para mudar a etapa.</p>'
-      : taskOptions('status', Object.entries(stages).map(([id, label]) => [id, label, taskIcon('stage')]), card.status),
-    blocked: `<textarea class="task-writing" name="blocked" maxlength="500" aria-label="O que está travando" placeholder="Deixe vazio se nada está travando.">${escape(card.blocked)}</textarea>`,
-    checklist: `<div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
-      ${button('Adicionar passo', 'add-check', 'plus')}`
-  };
-  return editorSteps.map(([key, label]) => `<section class="editor-step" data-editor-step="${key}" aria-label="${label}" hidden>
-    <h3 class="editor-step-title">${label}</h3>${panels[key]}
-  </section>`).join('');
-}
-
 /** Hora em palavras: "hoje, 21:54", "ontem, 10:02", "18/11, 09:30". */
 function when(iso) {
   const at = new Date(iso);
@@ -715,15 +671,34 @@ function actionSentence(action) {
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts.at(-1)}` : parts[0];
 }
 
+/* ---------- Ficha do cartão: tudo se edita no lugar, sem assistente passo a passo ---------- */
+const FIELD_PROPS = ['status', 'assignee', 'due', 'priority', 'blocked'];
+let openPopover = null;
+
+const stageDot = (status) => `<span class="stage-dot" data-status="${status}"></span>`;
+function propChip(card, prop) {
+  const assignee = board.members.find((item) => item.id === card.assigneeId);
+  const due = dueLabel(card);
+  const content = {
+    status: `${stageDot(card.status)}${stages[card.status]}`,
+    assignee: assignee ? `${face(assignee, 'card-face')}${escape(assignee.name)}` : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>Ninguém`,
+    due: due ? `${icon('calendar-days')}<span class="due-text" data-tone="${due.tone}">${due.text}</span>` : `${icon('calendar-days')}<span class="muted">Prazo</span>`,
+    priority: card.priority === 'alta' ? `${icon('flag')}<span class="urgent-text">Urgente</span>` : `${icon('flag')}<span class="${card.priority === 'baixa' ? 'muted' : ''}">${priorities[card.priority]}</span>`,
+    blocked: card.blocked ? `${icon('octagon-pause')}<span class="blocked-text">Travado</span>` : `${icon('octagon-pause')}<span class="muted">Travar</span>`
+  }[prop];
+  const labels = { status: 'Etapa', assignee: 'Quem faz', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
+  return `<button type="button" class="chip-prop" data-action="prop" data-prop="${prop}" data-card="${card.id}"
+    aria-haspopup="dialog" aria-label="${labels[prop]}: mudar" ${card.archived ? 'disabled' : ''}>${content}</button>`;
+}
+
 function showCard(card, origin, focus = true) {
   if (!card) return;
+  closePopover();
   const project = board.projects.find((item) => item.id === card.projectId);
-  const assignee = board.members.find((item) => item.id === card.assigneeId);
   const done = card.checklist.filter((item) => item.done).length;
-  const due = dueLabel(card);
+  const prints = card.attachments || [];
   const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
-    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>
-    <p class="task-viewers" aria-live="polite"></p>`;
+    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>`;
   const more = `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
       ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
       ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
@@ -731,129 +706,152 @@ function showCard(card, origin, focus = true) {
     </div></details>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
-    <div class="inspector-edit-actions" hidden>
-      ${button('Cancelar', 'task-cancel', '', 'ghost', `data-card="${card.id}"`)}
-      <span class="wizard-dots" aria-hidden="true">${editorSteps.map(([key]) => `<i data-dot="${key}"></i>`).join('')}</span>
-      <span class="wizard-count" aria-live="polite"></span>
-      ${button('Voltar', 'task-step-shift', 'arrow-left', 'ghost', 'data-offset="-1"')}
-      ${button('Próxima', 'task-step-shift', 'arrow-right', '', 'data-offset="1"')}
-      <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar</button>
-    </div>
-  </footer>`;
-  const tabs = [
-    ['summary', 'Resumo', 'task'],
-    ['conversation', 'Conversa', 'chat'],
-    ['history', 'Histórico', 'history']
-  ];
-  openDialog(editArea('title', `<span>${escape(card.title)}</span>`, 'task-heading-edit'), `
-    <nav class="inspector-nav" aria-label="Seções da ficha">
-      ${tabs.map(([key, label, glyph]) => button(taskIcon(glyph) + label, 'task-section', '', 'ghost',
-        `data-section="${key}" aria-pressed="${key === 'summary'}" aria-controls="task-${key}"`)).join('')}
-    </nav>
-    <section class="inspector-section summary-grid" id="task-summary" data-task-section="summary">
-      <aside class="props" aria-label="Detalhes do cartão">
-        <dl>
-          <div><dt>Etapa</dt><dd>${editArea('status', `<span class="stage-dot" data-status="${card.status}"></span>${stages[card.status]}`)}</dd></div>
-          <div><dt>Quem faz</dt><dd>${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}${escape(assignee?.name || 'Ninguém ainda')}`)}</dd></div>
-          <div><dt>Prazo</dt><dd>${editArea('due', due ? `<span class="due" data-tone="${due.tone}">${due.text}</span>` : '<span class="props-empty">Sem prazo</span>')}</dd></div>
-          <div><dt>Prioridade</dt><dd>${editArea('priority', card.priority === 'alta' ? '<span class="urgent">Urgente</span>' : priorities[card.priority])}</dd></div>
-        </dl>
-        <div class="props-next">${nextCardAction(card)}</div>
-      </aside>
-      <div class="summary-main">
-      ${card.blocked ? `<div class="inspector-block">${icon('octagon-pause')}
-        <div><h3>${editArea('blocked', 'Travado')}</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
-      <section class="inspector-description">
-        <h3 class="sr-only">Descrição</h3>
-        ${card.description ? `<p>${linkify(card.description)}</p>`
-          : editArea('description', `${icon('plus')} Escrever o que precisa ser feito`, 'inspector-empty')}
-      </section>
-      <section class="inspector-prints" aria-labelledby="prints-title">
-        <div class="inspector-progress-label"><h3 id="prints-title">Prints</h3>${(card.attachments || []).length ? `<span>${card.attachments.length}</span>` : ''}</div>
-        <ul class="prints">${(card.attachments || []).map((item, index) => `<li><button type="button" class="print" data-action="view-print"
-          data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${card.attachments.length}, de ${escape(item.by)}">
-          <img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}
-          ${card.archived ? '' : `<li class="print-add-cell"><label class="print-add" data-drop="${card.id}" title="Pôr imagem (ou Ctrl+V, ou arraste)">
-            ${icon('plus')}<span class="sr-only">Pôr imagem: escolha, cole com Ctrl+V ou arraste</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}">
-          </label></li>`}</ul>
-      </section>
-      ${`<section class="inspector-checks">
-        <div class="inspector-progress-label"><h3>Passos</h3>${editArea('checklist', `${icon('pencil')} ${card.checklist.length ? 'Mudar passos' : 'Adicionar passos'}`, 'inspector-link')}</div>
-        ${card.checklist.length ? `<div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" role="img" aria-label="${done} de ${card.checklist.length} passos feitos">
-          <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${done}/${card.checklist.length}</span></div>` : ''}
-        <ul class="steps">${card.checklist.map((item, index) => `<li><button type="button" class="step" data-action="toggle-check"
-          data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
-          <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button></li>`).join('')}</ul>
-      </section>`}
+    <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
+      <textarea name="comment" maxlength="2000" rows="1" required aria-label="Mensagem para a equipe"
+        placeholder="Escreva para a equipe e para os assistentes…"></textarea>
+      <div class="composer-bar">
+        ${card.archived ? '' : `<label class="composer-plus" title="Pôr uma imagem">${icon('plus')}<span class="sr-only">Pôr uma imagem</span>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`}
+        <span class="composer-hint">Enter envia · Ctrl+V cola print</span>
+        <button class="composer-send" aria-label="Enviar">${icon('send-horizontal')}</button>
       </div>
+      <div class="error" role="alert"></div>
+    </form>
+  </footer>`;
+  const title = `<textarea class="title-input" data-field="title" data-card="${card.id}" rows="1" maxlength="160"
+    aria-label="Título do cartão" ${card.archived ? 'readonly' : ''}>${escape(card.title)}</textarea>`;
+  openDialog(title, `<div class="ficha" tabindex="-1" data-card="${card.id}" data-version="${card.version}">
+    <div class="props-row" role="group" aria-label="Detalhes do cartão">
+      ${FIELD_PROPS.map((prop) => propChip(card, prop)).join('')}
+      <span class="props-next">${nextCardAction(card)}</span>
+    </div>
+    ${card.blocked ? `<button type="button" class="ficha-block" data-action="prop" data-prop="blocked" data-card="${card.id}">${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
+    <textarea class="desc-input" data-field="description" data-card="${card.id}" rows="2" maxlength="8000" aria-label="Descrição"
+      placeholder="Adicionar descrição…" ${card.archived ? 'readonly' : ''}>${escape(card.description)}</textarea>
+    <section class="ficha-steps" aria-label="Passos">
+      ${card.checklist.length ? `<div class="steps-head"><span>Passos</span><span class="trail-count">${done}/${card.checklist.length}</span></div>
+        <div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" aria-hidden="true"><span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""></div>` : ''}
+      <ul class="steps">${card.checklist.map((item, index) => `<li class="step-row"><button type="button" class="step" data-action="toggle-check"
+        data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
+        <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button>
+        ${card.archived ? '' : `<button type="button" class="step-remove" data-action="remove-step" data-card="${card.id}" data-index="${index}" aria-label="Tirar passo ${escape(item.title)}">${icon('x')}</button>`}</li>`).join('')}</ul>
+      ${card.archived ? '' : `<label class="step-add">${icon('plus')}<input data-add-step="${card.id}" maxlength="240" placeholder="Adicionar passo e Enter" aria-label="Novo passo"></label>`}
     </section>
-    <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
-      <div class="thread" id="task-comments">${cardActivity(card)}</div>
-      <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
-        <textarea name="comment" maxlength="2000" rows="2" required aria-label="Mensagem para a equipe"
-          placeholder="Escreva para a equipe e para os assistentes…"></textarea>
-        <div class="composer-bar">
-          ${card.archived ? '' : `<label class="composer-plus" title="Pôr uma imagem">${icon('plus')}<span class="sr-only">Pôr uma imagem</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`}
-          <span class="composer-hint">Enter envia · Shift+Enter pula linha · Ctrl+V cola print</span>
-          <button class="composer-send" aria-label="Enviar">${icon('send-horizontal')}</button>
-        </div>
-        <div class="error" role="alert"></div>
-      </form>
-    </section>
-    <section class="inspector-section" id="task-history" data-task-section="history" hidden>
-      <ol class="history" id="task-history-list">${cardHistory(card)}</ol>
-    </section>
-    <section class="inspector-section" data-task-section="edit" hidden>
-      <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
-        ${editorPanels(card)}
-        <div class="error task-edit-error" role="alert"></div>
-      </form>
-    </section>`, focus ? '#dialog-title' : null, { details, footer, origin, more });
+    ${prints.length ? `<ul class="prints">${prints.map((item, index) => `<li><button type="button" class="print" data-action="view-print"
+      data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${prints.length}"><img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}</ul>` : ''}
+    <div class="activity-head">
+      <nav class="inspector-nav" aria-label="Atividade do cartão">
+        ${button('Conversa', 'task-section', '', 'ghost', 'data-section="conversation" aria-pressed="true"')}
+        ${button('Histórico', 'task-section', '', 'ghost', 'data-section="history" aria-pressed="false"')}
+      </nav>
+    </div>
+    <section id="task-conversation" data-task-section="conversation"><div class="thread" id="task-comments">${cardActivity(card)}</div></section>
+    <section id="task-history" data-task-section="history" hidden><ol class="history" id="task-history-list">${cardHistory(card)}</ol></section>
+  </div>`, null, { details, footer, origin, more });
   paintTrails(dialog);
+  for (const box of dialog.querySelectorAll('.title-input, .desc-input')) autoGrow(box);
+  // Abre sem pôr o cursor no título (no celular isso abriria o teclado).
+  if (focus) dialog.querySelector('.ficha')?.focus({ preventScroll: true });
   if (focus) void sendPresence(); else paintPresence();
 }
 
-function setTaskSection(section, step = 'title') {
-  dialog.dataset.editing = String(section === 'edit');
-  for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== section;
-  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) {
-    control.setAttribute('aria-pressed', String(control.dataset.section === section));
-  }
-  if (section === 'conversation') {
-    const thread = dialog.querySelector('#task-comments');
-    if (thread) thread.scrollTop = thread.scrollHeight;
-  }
-  const editing = section === 'edit';
-  dialog.querySelector('.inspector-edit-actions').hidden = !editing;
-  const editButton = dialog.querySelector('.inspector-edit');
-  if (editButton) editButton.hidden = editing;
-  if (editing) setEditorStep(step);
+function autoGrow(box) {
+  box.style.height = 'auto';
+  box.style.height = `${box.scrollHeight}px`;
 }
 
-function setEditorStep(step, focus = true) {
-  const panel = dialog.querySelector(`[data-editor-step="${step}"]`);
-  if (!panel) return;
-  for (const item of dialog.querySelectorAll('[data-editor-step]')) item.hidden = item !== panel;
-  const previous = dialog.dataset.editorStep;
-  dialog.dataset.editorStep = step;
-  if (previous !== step && panel.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    panel.animate([{ opacity: .55, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
-      { duration: 170, easing: 'cubic-bezier(.16,1,.3,1)' });
-  }
-  const position = editorSteps.findIndex(([key]) => key === step);
-  dialog.querySelector('.wizard-count').textContent = `${position + 1} de ${editorSteps.length}`;
-  for (const dot of dialog.querySelectorAll('[data-dot]')) dot.dataset.on = String(dot.dataset.dot === step);
-  dialog.querySelector('[data-action=task-step-shift][data-offset="1"]').hidden = position === editorSteps.length - 1;
-  dialog.querySelector('[data-action=task-step-shift][data-offset="-1"]').disabled = position === 0;
-  dialog.querySelector('[data-action=task-step-shift][data-offset="1"]').disabled = position === editorSteps.length - 1;
-  if (step === 'due' && !panel.querySelector('.calendar-day')) renderTaskCalendar(panel, today());
-  if (focus) (panel.querySelector('input:not([type=hidden]), textarea, .calendar-day[aria-pressed=true]') ||
-    panel.querySelector('.editor-step-title'))?.focus({ preventScroll: true });
+function setTaskSection(section) {
+  const target = section === 'history' ? 'history' : 'conversation';
+  for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== target;
+  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) control.setAttribute('aria-pressed', String(control.dataset.section === target));
+  dialog.querySelector('.composer')?.toggleAttribute('hidden', target !== 'conversation');
+  const thread = dialog.querySelector('#task-comments');
+  if (thread && target === 'conversation') thread.scrollIntoView({ block: 'nearest' });
 }
 
-/** Conversa como chat: mensagens e prints na ordem, juntando o que a mesma pessoa mandou em seguida. */
+/** Grava uma mudança e redesenha a ficha guardando a aba, a rolagem e o rascunho. */
+async function saveCard(id, patch, done) {
+  const card = cardById(id);
+  if (!card) return;
+  await request(`/cards/${id}`, 'PATCH', { ...patch, version: card.version });
+  await refresh();
+  if (dialog.open && dialog.querySelector('.ficha')?.dataset.card === id) rerenderCard(cardById(id));
+  if (done) message(done);
+}
+
+function rerenderCard(card) {
+  const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
+  const draft = dialog.querySelector('[name=comment]')?.value || '';
+  const scroll = dialog.querySelector('.dialog-body')?.scrollTop || 0;
+  showCard(card, undefined, false);
+  if (section) setTaskSection(section);
+  dialog.querySelector('[name=comment]').value = draft;
+  dialog.querySelector('.dialog-body').scrollTop = scroll;
+}
+
+/* ---------- Menus dos campos (popovers) ---------- */
+function closePopover() {
+  openPopover?.remove();
+  openPopover = null;
+}
+
+function popoverOptions(card, prop) {
+  const option = (value, label, current, extra = '') => `<button type="button" class="pop-option" data-action="pick" data-prop="${prop}"
+    data-value="${escape(value)}" aria-pressed="${current}">${label}${extra}${current ? `<span class="pop-check">${icon('check')}</span>` : ''}</button>`;
+  if (prop === 'status') return Object.entries(stages).map(([key, label]) => option(key, `${stageDot(key)}${label}`, card.status === key)).join('');
+  if (prop === 'assignee') return option('', `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>Ninguém`, !card.assigneeId) +
+    board.members.map((member) => option(member.id, `${face(member, 'card-face')}${escape(member.name)}`, card.assigneeId === member.id,
+      presenceOf(member.id) ? '<span class="pop-online" title="Online agora"></span>' : '')).join('');
+  if (prop === 'priority') return [['alta', 'Urgente'], ['normal', 'Normal'], ['baixa', 'Baixa']]
+    .map(([key, label]) => option(key, `${icon('flag')}${label}`, card.priority === key)).join('');
+  if (prop === 'due') {
+    const base = new Date(`${today()}T12:00:00Z`);
+    const plus = (days) => new Date(base.getTime() + days * DAY).toISOString().slice(0, 10);
+    const monday = plus(((8 - base.getUTCDay()) % 7) || 7);
+    const quick = [['Hoje', today()], ['Amanhã', plus(1)], ['Segunda que vem', monday], ['Em 1 semana', plus(7)]];
+    return `<div class="pop-quick">${quick.map(([label, value]) => `<button type="button" class="pop-pill" data-action="pick" data-prop="due" data-value="${value}" aria-pressed="${card.due === value}">${label}</button>`).join('')}</div>
+      <div class="pop-calendar"><input type="hidden" name="due" value="${card.due || ''}"><div class="task-calendar"></div>
+      <button type="button" class="pop-clear" data-action="task-clear-day">Tirar prazo</button></div>`;
+  }
+  return `<textarea class="pop-text" maxlength="500" rows="3" placeholder="O que está travando?" aria-label="O que está travando">${escape(card.blocked)}</textarea>
+    <div class="pop-actions">${card.blocked ? `<button type="button" class="btn ghost" data-action="pick" data-prop="blocked" data-value="">${icon('play')}Destravar</button>` : ''}
+    <button type="button" class="btn primary" data-action="pick-blocked">Salvar</button></div>`;
+}
+
+function showPopover(trigger) {
+  const same = openPopover && openPopover.dataset.prop === trigger.dataset.prop;
+  closePopover();
+  if (same) return;
+  const card = cardById(trigger.dataset.card);
+  const prop = trigger.dataset.prop;
+  const pop = document.createElement('div');
+  pop.className = 'popover';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', trigger.getAttribute('aria-label'));
+  pop.dataset.prop = prop;
+  pop.dataset.card = card.id;
+  pop.innerHTML = popoverOptions(card, prop);
+  document.body.append(pop);
+  const rect = trigger.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  pop.style.left = `${Math.max(12, Math.min(innerWidth - width - 12, rect.left))}px`;
+  const below = innerHeight - rect.bottom > pop.offsetHeight + 16;
+  pop.style.top = `${below ? rect.bottom + 6 : Math.max(12, rect.top - pop.offsetHeight - 6)}px`;
+  openPopover = pop;
+  if (prop === 'due') renderTaskCalendar(pop.querySelector('.pop-calendar'), today());
+  (pop.querySelector('[aria-pressed=true]') || pop.querySelector('textarea, button'))?.focus({ preventScroll: true });
+}
+
+async function pickValue(prop, value, cardId) {
+  const field = { status: 'status', assignee: 'assigneeId', due: 'due', priority: 'priority', blocked: 'blocked' }[prop];
+  const patch = { [field]: value === '' && (prop === 'assignee' || prop === 'due') ? null : value };
+  closePopover();
+  const messages = { status: `Etapa: ${stages[value]}.`, assignee: 'Responsável trocado.', due: value ? 'Prazo marcado.' : 'Prazo tirado.',
+    priority: 'Prioridade mudada.', blocked: value ? 'Cartão travado.' : 'Cartão destravado.' };
+  if (prop === 'status') { await placeCard(cardId, value); rerenderCard(cardById(cardId)); return; }
+  await saveCard(cardId, patch, messages[prop]);
+}
+
 function cardActivity(card) {
   const items = [
     ...card.comments.map((item) => ({ kind: 'text', actor: item.actor, source: item.source, at: item.at, text: item.text })),
@@ -1080,8 +1078,39 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || !dialog.open || document.querySelector('.viewer') || event.defaultPrevented) return;
   const menu = dialog.querySelector('.menu[open]');
   if (menu) { menu.open = false; return; }
-  if (dialog.dataset.editing === 'true') { dialog.querySelector('[data-action=task-cancel]')?.click(); return; }
+  if (openPopover) { const trigger = dialog.querySelector(`[data-action=prop][data-prop="${openPopover.dataset.prop}"]`); closePopover(); trigger?.focus(); return; }
+  if (event.target.matches?.('.title-input, .desc-input')) { event.target.blur(); return; }
   dialog.close();
+});
+
+// Título e descrição: escreve no lugar e grava ao sair do campo.
+document.addEventListener('input', (event) => {
+  if (event.target.matches?.('.title-input, .desc-input, .composer textarea')) autoGrow(event.target);
+});
+document.addEventListener('focusout', async (event) => {
+  const box = event.target.closest?.('[data-field]');
+  if (!box || box.readOnly) return;
+  const card = cardById(box.dataset.card);
+  const value = box.dataset.field === 'title' ? box.value.replace(/\s+/g, ' ').trim() : box.value;
+  if (!card || value === card[box.dataset.field]) return;
+  if (box.dataset.field === 'title' && !value) { box.value = card.title; return message('O cartão precisa de um título.'); }
+  try {
+    await saveCard(card.id, { [box.dataset.field]: value }, box.dataset.field === 'title' ? 'Título salvo.' : 'Descrição salva.');
+  } catch (error) { message(error.message); }
+});
+document.addEventListener('keydown', async (event) => {
+  if (event.target.matches?.('.title-input') && event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
+  const add = event.target.closest?.('[data-add-step]');
+  if (add && event.key === 'Enter' && add.value.trim()) {
+    event.preventDefault();
+    const card = cardById(add.dataset.addStep);
+    const title = add.value.trim();
+    add.value = '';
+    try {
+      await saveCard(card.id, { checklist: [...card.checklist, { title, done: false }] });
+      dialog.querySelector('[data-add-step]')?.focus();
+    } catch (error) { message(error.message); }
+  }
 });
 
 // No chat: Enter envia, Shift+Enter pula linha.
@@ -1149,6 +1178,7 @@ document.addEventListener('change', async (event) => {
 
 document.addEventListener('click', async (event) => {
   const control = event.target.closest('button[data-action]');
+  if (openPopover && !openPopover.contains(event.target) && !event.target.closest?.('[data-action=prop]')) closePopover();
   if (!control) {
     if (event.target.classList?.contains('viewer')) event.target.remove();
     for (const menu of document.querySelectorAll('.menu[open]')) if (!menu.contains(event.target)) menu.open = false;
@@ -1188,25 +1218,22 @@ document.addEventListener('click', async (event) => {
         block?.focus({ preventScroll: true });
       }
     } else if (action === 'task-section') {
-      syncOpenCard();
-      setTaskSection(control.dataset.section, control.dataset.step);
-    }
-    else if (action === 'task-step') setEditorStep(control.dataset.step);
-    else if (action === 'task-step-shift') {
-      const index = editorSteps.findIndex(([key]) => key === dialog.dataset.editorStep);
-      setEditorStep(editorSteps[index + Number(control.dataset.offset)]?.[0]);
-    }
-    else if (['task-month', 'task-day', 'task-clear-day'].includes(action)) {
-      const panel = control.closest('.editor-step');
-      const due = panel.querySelector('[name=due]');
-      if (action !== 'task-month') due.value = control.dataset.date || '';
-      renderTaskCalendar(panel, today(), Number(control.dataset.offset || 0));
-      const target = action === 'task-month' ? `[data-offset="${control.dataset.offset}"]` : '[aria-pressed=true], [aria-current=date], .calendar-day';
-      panel.querySelector(target)?.focus({ preventScroll: true });
-    }
-    else if (action === 'task-cancel') {
-      showCard(cardById(card));
-      dialog.querySelector('.inspector-edit')?.focus();
+      setTaskSection(control.dataset.section);
+    } else if (action === 'prop') {
+      showPopover(control);
+    } else if (action === 'pick') {
+      await pickValue(control.dataset.prop, control.dataset.value, openPopover?.dataset.card || card);
+    } else if (action === 'pick-blocked') {
+      await pickValue('blocked', openPopover.querySelector('.pop-text').value.trim(), openPopover.dataset.card);
+    } else if (action === 'task-month') {
+      renderTaskCalendar(openPopover.querySelector('.pop-calendar'), today(), Number(control.dataset.offset));
+      openPopover.querySelector(`[data-offset="${control.dataset.offset}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'task-day' || action === 'task-clear-day') {
+      await pickValue('due', control.dataset.date || '', openPopover.dataset.card);
+    } else if (action === 'remove-step') {
+      const current = cardById(card);
+      const index = Number(control.dataset.index);
+      await saveCard(card, { checklist: current.checklist.filter((_, i) => i !== index) }, 'Passo tirado.');
     } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
     else if (action === 'connect') await showConnect();
@@ -1268,11 +1295,7 @@ document.addEventListener('click', async (event) => {
       const index = Number(control.dataset.index);
       const checklist = current.checklist.map((item, i) => (i === index ? { ...item, done: !item.done } : item));
       control.setAttribute('aria-pressed', String(checklist[index].done));
-      await request(`/cards/${card}`, 'PATCH', { checklist, version: current.version });
-      await refresh();
-      const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
-      showCard(cardById(card));
-      if (section && section !== 'summary') setTaskSection(section);
+      await saveCard(card, { checklist });
       dialog.querySelector(`[data-action=toggle-check][data-index="${index}"]`)?.focus({ preventScroll: true });
       if (checklist.every((item) => item.done)) message('Todos os passos feitos. A águia chegou!');
     } else if (action === 'archive-card' || action === 'restore') {
@@ -1310,8 +1333,7 @@ document.addEventListener('submit', async (event) => {
   if (!kind) return;
   event.preventDefault();
   const errorNode = form.querySelector('.error');
-  const submit = event.submitter || (kind === 'edit'
-    ? dialog.querySelector('button[form=task-edit]') : form.querySelector('button:not([type=button])'));
+  const submit = event.submitter || form.querySelector('button:not([type=button])');
   errorNode.textContent = '';
   submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
@@ -1331,18 +1353,7 @@ document.addEventListener('submit', async (event) => {
       view = 'board'; projectId = card.projectId; search = ''; blockedOnly = false;
       dialog.close(); await refresh({ shell: true }); message('Cartão criado.');
       root.querySelector(`.card-title[data-card="${card.id}"]`)?.focus();
-    } else if (kind === 'edit' || kind === 'comment') {
-      if (kind === 'edit') {
-        if (!data.title.trim()) {
-          setEditorStep('title');
-          throw new Error('Informe o título da tarefa.');
-        }
-        data.assigneeId ||= null;
-        data.due ||= null;
-        data.checklist = Array.from(form.querySelectorAll('.check-row'), (row) => ({
-          title: row.querySelector('input[type=text]').value.trim(), done: row.querySelector('input[type=checkbox]').checked
-        })).filter((item) => item.title);
-      }
+    } else if (kind === 'comment') {
       const version = Number(form.dataset.version);
       const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version });
       await refresh();
@@ -1352,16 +1363,12 @@ document.addEventListener('submit', async (event) => {
         thread.lastElementChild?.setAttribute('data-fresh', '');
         thread.scrollTop = thread.scrollHeight;
         dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
-        const editor = dialog.querySelector('#task-edit');
-        if (Number(editor.dataset.version) === version) editor.dataset.version = card.version;
+        const ficha = dialog.querySelector('.ficha');
+        if (ficha && Number(ficha.dataset.version) === version) ficha.dataset.version = card.version;
         form.dataset.version = card.version;
         form.reset();
         form.querySelector('[name=comment]').focus();
-      } else if (kind === 'edit' && form.isConnected) {
-        showCard(card);
-        dialog.querySelector('.inspector-edit')?.focus({ preventScroll: true });
       }
-      message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
     } else if (kind === 'context') {
       const links = [...form.querySelectorAll('.ctx-link-row')].map((row) => ({
         title: row.querySelector('[name=link-title]').value.trim(), url: row.querySelector('[name=link-url]').value.trim()
@@ -1460,38 +1467,23 @@ document.addEventListener('drop', (event) => {
 });
 
 function syncOpenCard() {
-  const editor = dialog.open && dialog.querySelector('#task-edit');
-  if (!editor) return;
-  const card = cardById(editor.dataset.card);
-  if (!card || card.version === Number(editor.dataset.version)) return;
-
-  const composer = dialog.querySelector('[data-form=comment]');
-  const textarea = composer.elements.comment;
-  const section = dialog.querySelector('[data-task-section]:not([hidden])').dataset.taskSection;
+  const ficha = dialog.open && dialog.querySelector('.ficha');
+  if (!ficha) return;
+  const card = cardById(ficha.dataset.card);
+  if (!card || card.version === Number(ficha.dataset.version)) return;
   const thread = dialog.querySelector('#task-comments');
   const atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 24;
-  if (card.version !== Number(composer.dataset.version) && !composer.querySelector('button:disabled')) {
+  const active = document.activeElement;
+  const typing = (dialog.contains(active) && active.matches('input, textarea')) || openPopover || document.querySelector('.viewer') ||
+    dialog.querySelector('.composer button:disabled');
+  if (typing) {
+    // Só a conversa e o histórico se atualizam enquanto a pessoa digita.
     thread.innerHTML = cardActivity(card);
     if (atBottom) thread.scrollTop = thread.scrollHeight;
     dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
-    composer.dataset.version = card.version;
+    return;
   }
-  const active = document.activeElement;
-  const inputFocused = dialog.contains(active) && active.matches('input, textarea, select');
-  if (section === 'edit' || inputFocused ||
-      dialog.querySelector('.print-add[data-busy], .composer button:disabled') || document.querySelector('.viewer')) return;
-
-  const focusedSection = dialog.contains(active) ? active.dataset.section : null;
-  const draft = textarea.value;
-  const scroll = dialog.querySelector('.dialog-body').scrollTop;
-  const threadScroll = thread.scrollTop;
-  showCard(card, undefined, dialog.contains(active));
-  setTaskSection(section);
-  dialog.querySelector('[name=comment]').value = draft;
-  dialog.querySelector('.dialog-body').scrollTop = scroll;
-  const nextThread = dialog.querySelector('#task-comments');
-  nextThread.scrollTop = atBottom ? nextThread.scrollHeight : threadScroll;
-  if (focusedSection) dialog.querySelector(`.inspector-nav [data-section="${focusedSection}"]`)?.focus({ preventScroll: true });
+  rerenderCard(card);
 }
 
 /* ---------- Quem está online ---------- */
