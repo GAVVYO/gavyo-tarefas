@@ -65,3 +65,11 @@ npm test
 ```
 
 O teste de integração usa SQLite em memória e cobre autenticação, permissões, criação via MCP, atribuição, mudança de etapa, comentário, checklist, autoria no histórico e arquivo.
+
+## Central de projetos e GitHub
+
+- Preencha **Repositório** (`dono/nome`) e **Branch** no Contexto do projeto: a aba Atividade mostra os commits.
+- Repositório privado: defina `GITHUB_TOKEN` (token só de leitura) no servidor.
+- Webhook (commits e PRs na hora): no GitHub, Settings → Webhooks → Add webhook, com Payload URL
+  `https://tarefas.gavyo.me/api/github/webhook`, Content type `application/json`, eventos **Pushes** e **Pull requests**
+  e uma senha em Secret. Coloque a mesma senha em `GITHUB_WEBHOOK_SECRET` no servidor.

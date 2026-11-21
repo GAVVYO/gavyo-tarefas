@@ -62,7 +62,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 7);
+  assert.equal((await client.listTools()).tools.length, 10);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
@@ -71,14 +71,38 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   }
 
   // Contexto do projeto: o assistente lê e escreve; a tela vê quem mexeu e por qual canal.
-  const context = await call('atualizar_contexto_projeto', { projectId: project.id, objetivo: 'Publicar o quadro' });
+  const context = await call('atualizar_contexto_projeto', { projectId: project.id, versaoLida: 0, objetivo: 'Publicar o quadro' });
   assert.equal(context.updated.source, 'Codex');
+  assert.equal(context.version, 1);
+  assert.equal(context.sectionBy.objetivo.readVersion, 0);
   assert.equal((await call('ver_contexto_projeto', { projectId: project.id })).objetivo, 'Publicar o quadro');
-  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { regras: 'Sempre abrir PR.' } });
+  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 1, regras: 'Sempre abrir PR.', producao: 'https://tarefas.gavyo.me' } });
   assert.equal(viaWeb.status, 200);
+  assert.equal(viaWeb.body.version, 2);
+  // Quem não leu a versão atual é recusado, e a tentativa fica no histórico.
+  const stale = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 1, regras: 'Apagar tudo' } });
+  assert.equal(stale.status, 409);
+  const iaAtrasada = await client.callTool({ name: 'atualizar_contexto_projeto', arguments: { projectId: project.id, versaoLida: 1, stack: 'x' } });
+  assert.ok(iaAtrasada.isError && /versão 2/.test(iaAtrasada.content[0].text));
+  const log = (await request(`/api/projects/${project.id}/context/history`, { headers })).body;
+  assert.deepEqual(log.map((entry) => entry.kind).slice(0, 4), ['recusado', 'recusado', 'versao', 'versao']);
+  assert.equal(log[2].by.source, 'Web');
+  // Central de projetos: a leitura da IA fica marcada; a conversa aceita pessoas e assistentes.
+  await call('ver_contexto_projeto', { projectId: project.id });
+  await call('enviar_mensagem_projeto', { projectId: project.id, text: 'Li o contexto e subi o ajuste.', ref: { kind: 'contexto', id: 'x', label: 'v2' } });
+  const conversa = await request(`/api/projects/${project.id}/messages`, { method: 'POST', headers, body: { text: 'Valeu!' } });
+  assert.equal(conversa.status, 200);
+  const mensagens = (await request(`/api/projects/${project.id}/messages`, { headers })).body;
+  assert.deepEqual(mensagens.map((item) => item.source), ['Codex', 'Web']);
+  const atividade = (await request(`/api/projects/${project.id}/activity`, { headers })).body;
+  assert.ok(atividade.items.some((item) => item.kind === 'contexto' && item.rejected));
+  assert.ok(!(await request(`/api/projects/${project.id}/context/history`, { headers })).body.some((item) => item.kind === 'leitura'));
+  const voltou = await request(`/api/projects/${project.id}/context/restore/1`, { method: 'POST', headers, body: { versaoLida: 2 } });
+  assert.equal(voltou.body.regras, '');
+  assert.equal(voltou.body.version, 3);
   assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
   assert.equal(viaWeb.body.updated.source, 'Web');
-  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
+  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {
@@ -273,4 +297,33 @@ test('presença: quem mandou sinal aparece como online, com a tela e o cartão q
   assert.deepEqual(list.map((item) => item.id).sort(), [felipe.member.id, bola.member.id].sort());
   assert.equal(list.find((item) => item.id === bola.member.id).cardId, cardId);
   assert.equal((await fetch(origin + '/api/presence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+});
+
+test('webhook do GitHub: só aceita assinatura certa e o push entra na linha do tempo', async (t) => {
+  const { createHmac } = await import('node:crypto');
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { commits: async () => ({ commits: [], note: '' }) }).listen(0, '127.0.0.1');
+  const previous = process.env.GITHUB_WEBHOOK_SECRET;
+  process.env.GITHUB_WEBHOOK_SECRET = 'segredo-de-teste';
+  t.after(async () => {
+    process.env.GITHUB_WEBHOOK_SECRET = previous;
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const member = await store.createMember({ name: 'João' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  await store.setProjectContext(project.id, { versaoLida: 0, repositorio: 'GAVVYO/gavyo-tarefas', branch: 'main' }, { ...member, source: 'Web' });
+  const body = JSON.stringify({ ref: 'refs/heads/main', repository: { full_name: 'GAVVYO/gavyo-tarefas' }, sender: { login: 'felipe' },
+    commits: [{ id: 'a'.repeat(40), message: 'Primeiro commit', timestamp: new Date().toISOString(), url: 'https://github.com/x', author: { username: 'felipe' } }] });
+  const send = (signature) => fetch(`${origin}/api/github/webhook`, { method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': signature }, body });
+  assert.equal((await send('sha256=errada')).status, 401);
+  assert.equal((await send(`sha256=${createHmac('sha256', 'segredo-de-teste').update(body).digest('hex')}`)).status, 200);
+  const events = await store.githubEvents('GAVVYO/gavyo-tarefas', 'main');
+  assert.equal(events[0].message, 'Primeiro commit');
+  const activity = await store.projectActivity(project.id, events);
+  assert.ok(activity.some((item) => item.kind === 'commit' && item.short === 'aaaaaaa'));
 });

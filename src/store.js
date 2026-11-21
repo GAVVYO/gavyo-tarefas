@@ -295,27 +295,165 @@ export function createStore({ query }) {
     return { previous: current, saved: next };
   }
 
-  /** Contexto do projeto: seções em texto e links; guarda quem mexeu por último e por qual canal. */
+  /**
+   * Contexto do projeto: seções em texto, links, responsável e ambientes.
+   * Cada gravação vira uma versão com autor, canal, hora e a versão que a pessoa
+   * (ou a IA) leu antes. Se alguém salvou no meio-tempo, a gravação é recusada.
+   */
+  const AGENT_SOURCES = ['Codex', 'Claude'];
   const CONTEXT_SECTIONS = ['resumo', 'objetivo', 'regras', 'stack', 'decisoes'];
+  const httpUrl = z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.');
   const contextInput = z.object({
     ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, z.string().max(12000).optional()])),
-    links: z.array(z.object({ title: z.string().trim().min(1).max(120), url: z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.') })).max(30).optional()
+    links: z.array(z.object({ title: z.string().trim().min(1).max(120), url: httpUrl })).max(30).optional(),
+    responsavelId: z.uuid().nullable().optional(),
+    producao: z.union([httpUrl, z.literal('')]).optional(),
+    teste: z.union([httpUrl, z.literal('')]).optional(),
+    repositorio: z.string().trim().max(200).optional(),
+    branch: z.string().trim().max(120).optional()
   });
-  async function projectContext(projectId) {
+  const CONTEXT_FIELDS = [...CONTEXT_SECTIONS, 'links', 'responsavelId', 'producao', 'teste', 'repositorio', 'branch'];
+  const readVersion = z.coerce.number().int().min(0, 'Informe a versão do contexto que você leu (campo versaoLida).');
+
+  async function contextRow(projectId) {
     if (!(await project(projectId))) throw new AppError(404, 'Projeto não encontrado.');
-    const row = await first('SELECT data FROM project_context WHERE project_id = ?', [projectId]);
-    const empty = { ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, ''])), links: [], updated: null };
+    return first('SELECT data FROM project_context WHERE project_id = ?', [projectId]);
+  }
+  function contextOf(row) {
+    const empty = { ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, ''])), links: [], responsavelId: null,
+      producao: '', teste: '', repositorio: '', branch: '', version: 0, updated: null, sectionBy: {} };
     return { ...empty, ...(row ? JSON.parse(row.data) : {}) };
   }
-  async function setProjectContext(projectId, input, actor) {
-    const current = await projectContext(projectId);
-    const patch = contextInput.parse(input);
-    const next = { ...current, ...patch, updated: event(actor, 'Editou o contexto') };
+  async function projectContext(projectId) {
+    return contextOf(await contextRow(projectId));
+  }
+  async function logContext(projectId, entry) {
+    await query('INSERT INTO context_history (id, project_id, at, data) VALUES (?, ?, ?, ?)',
+      [randomUUID(), projectId, Date.now(), JSON.stringify(entry)]);
+  }
+  async function writeContext(projectId, row, current, patch, actor, read, action) {
+    const by = event(actor, action);
+    const changed = CONTEXT_FIELDS.filter((key) => key in patch && JSON.stringify(patch[key]) !== JSON.stringify(current[key]));
+    if (read !== current.version) {
+      await logContext(projectId, { kind: 'recusado', by, readVersion: read, version: current.version, changed });
+      throw new AppError(409, `O contexto mudou: agora está na versão ${current.version} e você leu a ${read}. Leia de novo (ver_contexto_projeto) antes de editar.`);
+    }
+    if (!changed.length) return current;
+    if (patch.responsavelId) await validateAssignee(patch.responsavelId);
+    const sectionBy = { ...current.sectionBy };
+    for (const key of changed) sectionBy[key] = { ...by, readVersion: read };
+    const next = { ...current, ...patch, version: current.version + 1, updated: { ...by, readVersion: read }, sectionBy };
     const data = JSON.stringify(next);
-    const saved = await query('UPDATE project_context SET data = ? WHERE project_id = ?', [data, projectId]);
-    if (!saved.affectedRows) await query('INSERT INTO project_context (project_id, data) VALUES (?, ?)', [projectId, data]);
+    const saved = row
+      ? await query('UPDATE project_context SET data = ? WHERE project_id = ? AND data = ?', [data, projectId, row.data])
+      : await query('INSERT INTO project_context (project_id, data) VALUES (?, ?)', [projectId, data]).catch(() => ({ affectedRows: 0 }));
+    if (!saved.affectedRows) throw new AppError(409, 'O contexto mudou agora mesmo. Leia de novo antes de editar.');
+    await logContext(projectId, { kind: 'versao', by, readVersion: read, version: next.version, changed, snapshot: next });
     return next;
   }
+  async function setProjectContext(projectId, input, actor) {
+    const row = await contextRow(projectId);
+    const current = contextOf(row);
+    const { versaoLida, ...rest } = input || {};
+    const read = readVersion.parse(versaoLida ?? (current.version === 0 ? 0 : undefined));
+    return writeContext(projectId, row, current, contextInput.parse(rest), actor, read, 'Editou o contexto');
+  }
+  async function contextHistory(projectId) {
+    await contextRow(projectId);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    return rows.map((row) => JSON.parse(row.data)).filter((entry) => entry.kind !== 'leitura');
+  }
+  /** Registra que alguém leu o contexto (o MCP chama ao ler). Uma marca por pessoa e versão. */
+  async function markContextRead(projectId, actor) {
+    const current = await projectContext(projectId);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    const seen = rows.map((row) => JSON.parse(row.data)).some((entry) => entry.kind === 'leitura' &&
+      entry.by.actor === actor.name && entry.by.source === actor.source && entry.version === current.version);
+    if (!seen) await logContext(projectId, { kind: 'leitura', by: event(actor, 'Leu o contexto'), version: current.version });
+    return current;
+  }
 
-  return { projectContext, setProjectContext, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  /** Linha do tempo do projeto: contexto, cartões e commits, do mais novo para o mais velho. */
+  async function projectActivity(projectId, commits = []) {
+    await contextRow(projectId);
+    const rows = await query('SELECT id, data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 400', [projectId]);
+    const log = rows.map((row) => ({ id: row.id, ...JSON.parse(row.data) }));
+    const reads = log.filter((entry) => entry.kind === 'leitura');
+    /** Última leitura do contexto pela mesma pessoa/canal antes de um momento. */
+    const readBefore = (by) => reads.find((entry) => entry.by.actor === by.actor && entry.by.source === by.source && entry.by.at <= by.at);
+    const items = log.filter((entry) => entry.kind !== 'leitura').map((entry) => ({
+      kind: 'contexto', id: entry.id, at: entry.by.at, by: entry.by, rejected: entry.kind === 'recusado',
+      version: entry.version, readVersion: entry.readVersion, changed: entry.changed || []
+    }));
+    for (const card of await readCards(projectId)) {
+      card.history.forEach((entry, index) => {
+        const read = AGENT_SOURCES.includes(entry.source) ? readBefore(entry) : undefined;
+        items.push({ kind: 'cartao', id: `${card.id}:${index}`, at: entry.at, by: entry, cardId: card.id, key: card.key, title: card.title,
+          action: entry.action, ...(AGENT_SOURCES.includes(entry.source) ? { readVersion: read ? read.version : null } : {}) });
+      });
+    }
+    for (const item of commits) items.push(item.kind ? item : { kind: 'commit', id: `commit:${item.sha}`, ...item });
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+  }
+
+  /** Pushes e PRs que o webhook do GitHub entregou. */
+  const repoName = (value) => String(value || '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
+  async function saveGithubEvent(kind, payload) {
+    const repo = repoName(payload.repository?.full_name);
+    if (!repo) return;
+    const rows = [];
+    if (kind === 'push') {
+      const branch = String(payload.ref || '').replace(/^refs\/heads\//, '');
+      for (const commit of payload.commits || []) rows.push({ kind: 'commit', id: `commit:${commit.id}`, sha: commit.id, short: commit.id.slice(0, 7),
+        message: String(commit.message || '').slice(0, 2000), at: commit.timestamp, url: commit.url, branch,
+        by: { actor: commit.author?.username || commit.author?.name || payload.sender?.login || 'alguém', source: 'GitHub', at: commit.timestamp } });
+    } else if (kind === 'pull_request' && ['opened', 'closed', 'reopened', 'ready_for_review'].includes(payload.action)) {
+      const pr = payload.pull_request;
+      const state = payload.action === 'closed' ? (pr.merged ? 'mesclou' : 'fechou') : payload.action === 'reopened' ? 'reabriu' : 'abriu';
+      const at = payload.action === 'closed' ? (pr.merged_at || pr.closed_at) : pr.updated_at;
+      rows.push({ kind: 'pr', id: `pr:${pr.number}:${state}`, number: pr.number, title: String(pr.title || '').slice(0, 300), state, url: pr.html_url,
+        branch: pr.head?.ref || '', base: pr.base?.ref || '', at, by: { actor: payload.sender?.login || pr.user?.login || 'alguém', source: 'GitHub', at } });
+    }
+    for (const row of rows) {
+      const data = JSON.stringify(row);
+      const done = await query('UPDATE github_events SET data = ? WHERE id = ?', [data, `${repo}|${row.id}`]);
+      if (!done.affectedRows) await query('INSERT INTO github_events (id, repo, at, data) VALUES (?, ?, ?, ?)', [`${repo}|${row.id}`, repo, Date.parse(row.at) || Date.now(), data]);
+    }
+  }
+  async function githubEvents(repository, branch = '') {
+    const repo = repoName(repository);
+    if (!repo) return [];
+    const rows = await query('SELECT data FROM github_events WHERE repo = ? ORDER BY at DESC LIMIT 200', [repo]);
+    return rows.map((row) => JSON.parse(row.data)).filter((item) => !branch || item.kind === 'pr' || item.branch === branch);
+  }
+
+  const messageInput = z.object({
+    text: z.string().trim().min(1, 'Escreva a mensagem.').max(4000),
+    ref: z.object({ kind: z.enum(['commit', 'pr', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).nullable().optional()
+  });
+  async function projectMessages(projectId) {
+    await contextRow(projectId);
+    const rows = await query('SELECT data FROM project_messages WHERE project_id = ? ORDER BY at DESC LIMIT 200', [projectId]);
+    return rows.map((row) => JSON.parse(row.data)).reverse();
+  }
+  async function addProjectMessage(projectId, input, actor) {
+    await contextRow(projectId);
+    const { text, ref } = messageInput.parse(input);
+    const message = { id: randomUUID(), text, ref: ref || null, ...event(actor, 'Mensagem') };
+    delete message.action;
+    await query('INSERT INTO project_messages (id, project_id, at, data) VALUES (?, ?, ?, ?)', [message.id, projectId, Date.now(), JSON.stringify(message)]);
+    return message;
+  }
+  async function restoreContext(projectId, version, input, actor) {
+    const row = await contextRow(projectId);
+    const current = contextOf(row);
+    const read = readVersion.parse(input?.versaoLida);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ?', [projectId]);
+    const target = rows.map((r) => JSON.parse(r.data)).find((entry) => entry.kind === 'versao' && entry.version === version);
+    if (!target) throw new AppError(404, 'Versão não encontrada.');
+    const patch = Object.fromEntries(CONTEXT_FIELDS.map((key) => [key, target.snapshot[key] ?? current[key]]));
+    return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
+  }
+
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

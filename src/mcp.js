@@ -20,13 +20,23 @@ export async function serveMcp(req, res, store, actor) {
   }
 
   add('listar_projetos', 'Lista os projetos e seus IDs.', {}, true, store.projects);
-  add('ver_contexto_projeto', 'Lê o contexto do projeto (o que é, objetivo atual, regras de trabalho, stack, decisões e links). Leia antes de começar qualquer tarefa do projeto.',
-    { projectId: z.uuid() }, true, ({ projectId }) => store.projectContext(projectId));
-  add('atualizar_contexto_projeto', 'Atualiza seções do contexto do projeto (resumo, objetivo, regras, stack, decisoes, links). Só mande as seções que mudaram; registre decisões importantes em decisoes.',
-    { projectId: z.uuid(), resumo: z.string().max(12000).optional(), objetivo: z.string().max(12000).optional(),
+  add('ver_contexto_projeto', 'Lê o contexto do projeto (o que é, objetivo, regras, stack, decisões, links, responsável, produção, teste e repositório). Leia antes de começar qualquer tarefa do projeto. Guarde o campo version: ele é a versaoLida que atualizar_contexto_projeto exige.',
+    { projectId: z.uuid() }, true, ({ projectId }) => store.markContextRead(projectId, actor));
+  add('atualizar_contexto_projeto', 'Atualiza o contexto do projeto. Obrigatório mandar versaoLida = o version que você leu em ver_contexto_projeto; se alguém mudou depois, a gravação é recusada e você deve ler de novo. Mande só o que mudou; registre decisões importantes em decisoes. Fica registrado quem escreveu, por qual canal, quando e qual versão leu.',
+    { projectId: z.uuid(), versaoLida: z.number().int().min(0), resumo: z.string().max(12000).optional(), objetivo: z.string().max(12000).optional(),
       regras: z.string().max(12000).optional(), stack: z.string().max(12000).optional(), decisoes: z.string().max(12000).optional(),
-      links: z.array(z.object({ title: z.string(), url: z.string() })).max(30).optional() },
+      links: z.array(z.object({ title: z.string(), url: z.string() })).max(30).optional(),
+      producao: z.string().max(500).optional(), teste: z.string().max(500).optional(), repositorio: z.string().max(200).optional(), branch: z.string().max(120).optional(),
+      responsavelId: z.uuid().nullable().optional() },
     false, ({ projectId, ...patch }) => store.setProjectContext(projectId, patch, actor));
+  add('historico_contexto_projeto', 'Lista as versões do contexto do projeto: quem escreveu, por qual canal, quando, qual versão leu antes e o que mudou (inclui tentativas recusadas).',
+    { projectId: z.uuid() }, true, async ({ projectId }) => (await store.contextHistory(projectId)).map(({ snapshot, ...entry }) => entry));
+  add('ler_mensagens_projeto', 'Lê a conversa do projeto na Central de projetos (equipe e assistentes).',
+    { projectId: z.uuid() }, true, ({ projectId }) => store.projectMessages(projectId));
+  add('enviar_mensagem_projeto', 'Escreve na conversa do projeto. Use para avisar o que fez, pedir decisão ou responder alguém. Pode citar um item da linha do tempo em ref.',
+    { projectId: z.uuid(), text: z.string().min(1).max(4000),
+      ref: z.object({ kind: z.enum(['commit', 'pr', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).optional() },
+    false, ({ projectId, ...input }) => store.addProjectMessage(projectId, input, actor));
   add('listar_membros', 'Lista responsáveis disponíveis e seus IDs.', {}, true, store.members);
   add('listar_tarefas', 'Lista tarefas ativas. Use minhas=true para ver as atribuídas à pessoa conectada.',
     { projectId: z.uuid().optional(), minhas: z.boolean().optional(), blocked: z.boolean().optional(), archived: z.boolean().optional() },
