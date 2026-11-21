@@ -32,7 +32,14 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   assert.equal((await request('/api/board')).status, 401);
   // Cache: ícones e fonte guardados por 7 dias; o app sempre conferido.
   assert.match((await fetch(`${origin}/assets/icons/plus.svg`)).headers.get('cache-control'), /max-age=604800/);
-  assert.equal((await fetch(`${origin}/app.js`)).headers.get('cache-control'), 'no-cache');
+  // App e estilo com a versão no endereço: guardados por 1 ano, e o endereço muda quando o arquivo muda.
+  const page = await (await fetch(`${origin}/`)).text();
+  const appUrl = page.match(/\/app\.js\?v=[\w-]+/)?.[0];
+  assert.ok(appUrl && /\/styles\.css\?v=[\w-]+/.test(page), page);
+  const appFile = await fetch(origin + appUrl);
+  assert.match(appFile.headers.get('cache-control'), /max-age=31536000/);
+  assert.match(await appFile.text(), /from '\.\/task-calendar\.js\?v=[\w-]+'/);
+  assert.equal((await fetch(`${origin}/`)).headers.get('cache-control'), 'no-cache');
   assert.equal((await request('/mcp')).status, 401);
   const profiles = await request('/api/profiles');
   assert.deepEqual(profiles.body, [{ id: member.id, name: member.name }]);
