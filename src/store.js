@@ -491,7 +491,8 @@ export function createStore({ query }) {
     const rows = await query('SELECT data FROM context_history WHERE project_id = ?', [projectId]);
     const target = rows.map((r) => JSON.parse(r.data)).find((entry) => entry.kind === 'versao' && entry.version === version);
     if (!target) throw new AppError(404, 'Versão não encontrada.');
-    const patch = Object.fromEntries(CONTEXT_FIELDS.map((key) => [key, target.snapshot[key] ?? current[key]]));
+    const patch = Object.fromEntries(CONTEXT_FIELDS.filter((key) => Object.hasOwn(target.snapshot, key))
+      .map((key) => [key, target.snapshot[key]]));
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
