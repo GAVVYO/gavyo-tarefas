@@ -168,6 +168,21 @@ function applyBackground(prefs) {
   else html.style.removeProperty('--bg-image');
 }
 
+const PALETTES = [['dourado', 'Dourado GAVYO'], ['tokyo', 'Tokyo Night'], ['cyberpunk', 'Cyberpunk']];
+const readPalette = () => { try { return localStorage.getItem('gavyo-palette') || 'dourado'; } catch { return 'dourado'; } };
+function applyPalette(name) {
+  const palette = PALETTES.some(([key]) => key === name) ? name : 'dourado';
+  if (palette === 'dourado') delete document.documentElement.dataset.palette; else document.documentElement.dataset.palette = palette;
+  try { localStorage.setItem('gavyo-palette', palette); } catch { /* sem armazenamento: vale só nesta aba */ }
+}
+applyPalette(readPalette());
+function palettePicker() {
+  const current = readPalette();
+  return `<p class="edit-panel-title" id="palette-title">Cores</p><div class="palette-swatches" role="group" aria-labelledby="palette-title">
+    ${PALETTES.map(([key, label]) => `<button type="button" class="palette-swatch" data-action="set-palette" data-palette="${key}" aria-pressed="${current === key}">
+      <span class="palette-dots" aria-hidden="true"><i></i><i></i><i></i></span>${label}</button>`).join('')}</div>`;
+}
+
 function backgroundPicker() {
   const prefs = board.preferences || {};
   const current = prefs.background || 'noite';
@@ -212,9 +227,78 @@ async function refresh({ shell = false } = {}) {
 
 function projectHeading() {
   return view === 'board' && board.projects.length > 1
-    ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
+    ? projectFan()
     : escape({ board: board.projects[0]?.name || 'Quadro', context: board.projects[0]?.name || 'Contexto', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
 }
+
+/** Seletor de projeto em leque: os projetos descem em cascata e crescem conforme o mouse se aproxima. */
+function projectFan() {
+  const current = board.projects.find((project) => project.id === projectId) || board.projects[0];
+  return `<div class="fan-picker"><button type="button" id="project" class="fan-trigger" aria-haspopup="listbox" aria-expanded="false"
+      aria-controls="project-fan" aria-label="Projeto: ${escape(current?.name)}. Trocar">${escape(current?.name)}${icon('chevron-down')}</button>
+    <ul class="fan" id="project-fan" role="listbox" aria-label="Projetos" hidden>${board.projects.map((project, index) => `<li role="presentation">
+      <button type="button" role="option" class="fan-item" data-action="pick-project" data-project="${project.id}" aria-selected="${project.id === current?.id}"
+        tabindex="-1"><span class="fan-dot" aria-hidden="true"></span>${escape(project.name)}</button></li>`).join('')}</ul></div>`;
+}
+
+function fanOpen(open, focusSelected = true) {
+  const trigger = root.querySelector('.fan-trigger');
+  const fan = root.querySelector('.fan');
+  if (!trigger || !fan) return;
+  trigger.setAttribute('aria-expanded', String(open));
+  if (open) {
+    fan.hidden = false;
+    requestAnimationFrame(() => fan.classList.add('is-open'));
+    if (focusSelected) (fan.querySelector('[aria-selected=true]') || fan.querySelector('.fan-item'))?.focus({ preventScroll: true });
+  } else {
+    fan.classList.remove('is-open');
+    for (const item of fan.querySelectorAll('.fan-item')) item.style.removeProperty('--grow');
+    setTimeout(() => { if (!fan.classList.contains('is-open')) fan.hidden = true; }, 220);
+  }
+}
+
+/** Efeito lupa: quanto mais perto do ponteiro, maior o projeto (CSP: valor posto pelo CSSOM). */
+function fanMagnify(event) {
+  const fan = event.target.closest?.('.fan.is-open');
+  if (!fan) return;
+  for (const item of fan.querySelectorAll('.fan-item')) {
+    const box = item.getBoundingClientRect();
+    const distance = Math.abs(event.clientY - (box.top + box.height / 2));
+    item.style.setProperty('--grow', Math.max(item.getAttribute('aria-selected') === 'true' ? .18 : 0, 1 - distance / 90).toFixed(3));
+  }
+}
+document.addEventListener('pointermove', fanMagnify);
+document.addEventListener('pointerleave', (event) => {
+  if (!event.target.classList?.contains('fan')) return;
+  for (const item of event.target.querySelectorAll('.fan-item')) item.style.removeProperty('--grow');
+}, true);
+document.addEventListener('click', (event) => {
+  const trigger = event.target.closest?.('.fan-trigger');
+  if (trigger) { fanOpen(trigger.getAttribute('aria-expanded') !== 'true', event.detail === 0); return; }
+  const pick = event.target.closest?.('[data-action=pick-project]');
+  if (pick) {
+    projectId = pick.dataset.project; contextEditing = false;
+    fanOpen(false); renderContents(); updateProjectHeading();
+    root.querySelector('.fan-trigger')?.focus({ preventScroll: true });
+    return;
+  }
+  if (!event.target.closest?.('.fan-picker')) fanOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  const fan = root.querySelector('.fan.is-open');
+  if (event.target.closest?.('.fan-trigger') && event.key === 'ArrowDown') { event.preventDefault(); fanOpen(true); return; }
+  if (!fan || !fan.contains(document.activeElement)) return;
+  const items = [...fan.querySelectorAll('.fan-item')];
+  const at = items.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    items[(at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+  } else if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape') event.preventDefault();
+    fanOpen(false);
+    if (event.key === 'Escape') root.querySelector('.fan-trigger')?.focus();
+  }
+});
 
 function updateProjectHeading() {
   const restorePickerFocus = document.activeElement?.id === 'project';
@@ -268,6 +352,7 @@ function renderShell() {
         <h2 id="profile-name">${escape(board.user.name)}</h2>
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
         ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
+        <div id="palette-slot">${palettePicker()}</div>
         <div id="bg-slot">${backgroundPicker()}</div>
         <div class="notify-pref">${notifyPrefButton()}</div>
       </div>
@@ -1877,6 +1962,10 @@ document.addEventListener('click', async (event) => {
       openPopover.querySelector(`[data-offset="${control.dataset.offset}"]`)?.focus({ preventScroll: true });
     } else if (action === 'task-day' || action === 'task-clear-day') {
       await pickValue('due', control.dataset.date || '', openPopover.dataset.card);
+    } else if (action === 'set-palette') {
+      applyPalette(control.dataset.palette);
+      root.querySelector('#palette-slot').innerHTML = palettePicker();
+      root.querySelector(`[data-action=set-palette][data-palette="${control.dataset.palette}"]`)?.focus();
     } else if (action === 'step-details') {
       const panel = dialog.querySelector(`#step-${control.dataset.step}`);
       const opening = panel.hidden;
