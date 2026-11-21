@@ -1143,6 +1143,7 @@ function setTaskSection(section) {
 /** Grava uma mudança e redesenha a ficha guardando a aba, a rolagem e o rascunho. */
 /** Passos com os detalhes abertos: sobrevivem ao redesenho da ficha. */
 const openSteps = new Set();
+const stepSaves = new WeakMap();
 
 const sameText = (a, b) => (typeof a === 'string' ? a.replace(/\r\n?/g, '\n') : a) === (typeof b === 'string' ? b.replace(/\r\n?/g, '\n') : b);
 
@@ -1166,7 +1167,7 @@ function redrawKeepingFocus(cardId) {
   if (!now || !dialog.open || dialog.querySelector('.ficha')?.dataset.card !== cardId) return;
   const active = document.activeElement;
   const field = dialog.contains(active) && active.matches('input, textarea') ? active : null;
-  if (field && field.value !== field.defaultValue) return;
+  if (dialog.querySelector('[data-step-saving]') || (field && field.value !== field.defaultValue)) return;
   const selector = field && (field.dataset.stepField ? `[data-step-field="${field.dataset.stepField}"][data-step="${field.dataset.step}"]`
     : field.dataset.addStep ? '.ficha [data-add-step]' : field.dataset.field ? `[data-field="${field.dataset.field}"]` : null);
   rerenderCard(now);
@@ -1666,20 +1667,40 @@ document.addEventListener('focusout', async (event) => {
     await saveCard(card.id, { [box.dataset.field]: value }, box.dataset.field === 'title' ? 'Título salvo.' : 'Descrição salva.');
   } catch (error) { message(error.message); }
 });
-// Detalhes e PR do passo: gravam ao sair do campo, só se mudaram.
+// Cada campo grava na ordem em que foi editado, mesmo se a rede demorar.
 document.addEventListener('focusout', async (event) => {
   const box = event.target.closest?.('[data-step-field]');
   if (!box || box.readOnly) return;
-  const field = box.dataset.stepField;
-  const shown = field === 'pr' ? box.defaultValue.trim() : box.defaultValue;
+  const { stepField: field, card: cardId, step: stepId } = box.dataset;
+  const shownValue = () => field === 'pr' ? box.defaultValue.trim() : box.defaultValue;
   const value = field === 'pr' ? box.value.trim() : box.value;
-  // Compara com o que a tela mostrava, não com o quadro (que pode ter chegado novo sem redesenhar).
-  if (value === shown) return;
+  const previous = stepSaves.get(box);
+  if (!previous && value === shownValue()) return;
   if (field === 'pr' && value && !/^https?:\/\/\S+$/i.test(value)) return message('O link do PR precisa começar com http:// ou https://.');
-  try {
-    await saveStep(box.dataset.card, box.dataset.step, { [field]: value }, field === 'pr' ? 'Link do PR salvo.' : 'Detalhes salvos.', 'PATCH', { [field]: shown });
-    if (box.isConnected) box.defaultValue = value;
-  } catch (error) { message(error.message); }
+
+  box.dataset.stepSaving = '';
+  const saving = (previous ?? Promise.resolve()).then(async () => {
+    const shown = shownValue();
+    if (value === shown) return false;
+    try {
+      await saveStep(cardId, stepId, { [field]: value }, undefined, 'PATCH', { [field]: shown });
+      // A resposta confirma o valor enviado, mesmo se já houver outro texto no campo.
+      box.defaultValue = value;
+      return true;
+    } catch (error) {
+      message(error.message);
+      return false;
+    }
+  });
+  stepSaves.set(box, saving);
+  const saved = await saving;
+  if (stepSaves.get(box) !== saving) return;
+  stepSaves.delete(box);
+  delete box.dataset.stepSaving;
+  if (saved && box.isConnected) {
+    redrawKeepingFocus(cardId);
+    message(field === 'pr' ? 'Link do PR salvo.' : 'Detalhes salvos.');
+  }
 });
 document.addEventListener('keydown', async (event) => {
   if (event.target.matches?.('.title-input') && event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
@@ -2164,7 +2185,7 @@ function syncOpenCard() {
   const atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 24;
   const active = document.activeElement;
   const typing = (dialog.contains(active) && active.matches('input, textarea')) || openPopover || document.querySelector('.viewer') ||
-    dialog.querySelector('.composer button:disabled');
+    dialog.querySelector('.composer button:disabled, [data-step-saving]');
   if (typing) {
     // Só a conversa e o histórico se atualizam enquanto a pessoa digita.
     thread.innerHTML = cardActivity(card);

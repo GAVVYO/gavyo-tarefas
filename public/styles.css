@@ -1703,7 +1703,6 @@ button.chip-prop{cursor:pointer;font:inherit;font-size:.857rem;font-weight:600}
 .step-pr{display:flex;align-items:center;gap:8px;color:var(--muted)}
 .step-pr .icon{width:14px;height:14px;opacity:.6}
 .step-pr input{flex:1;min-height:30px;border:0;border-bottom:1px solid var(--line);background:transparent;color:inherit;padding:2px}
-.step-details textarea:focus-visible,.step-pr input:focus-visible{outline:0;border-bottom-color:#e9bf6e66}
 
 /* Conversa recolhida: sem caixa de mensagem nem aviso, o rodapé some. */
 .task-dialog .task-footer:not(:has(.composer:not([hidden]),.task-feedback:not([hidden]))){display:none}
