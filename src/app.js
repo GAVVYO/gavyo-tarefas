@@ -1,5 +1,6 @@
 import express from 'express';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,28 @@ const FIELD_LABELS = {
   checklist: 'Passos', resumo: 'O que é', objetivo: 'No que estamos agora', regras: 'Como trabalhamos', decisoes: 'Decisões',
   stack: 'Stack', producao: 'Produção', teste: 'Teste', repositorio: 'Repositório', branch: 'Branch', versaoLida: 'Versão lida'
 };
+
+/**
+ * App e estilo com a versão no endereço (app.js?v=…): a versão é a impressão digital do
+ * arquivo já com os imports versionados, então muda sempre que ele ou um import muda.
+ * Endereço versionado fica guardado por 1 ano; index.html é conferido sempre.
+ */
+function versionAssets(dir) {
+  const raw = new Map(readdirSync(dir).filter((name) => /\.(js|css)$/.test(name)).map((name) => [name, readFileSync(join(dir, name), 'utf8')]));
+  const files = new Map();
+  const build = (name) => {
+    if (files.has(name)) return files.get(name);
+    const body = raw.get(name).replace(/(from\s+['"]\.\/)([\w-]+\.js)(['"])/g, (all, start, dep, end) =>
+      raw.has(dep) ? `${start}${dep}?v=${build(dep).v}${end}` : all);
+    const asset = { body, v: createHash('sha256').update(body).digest('base64url').slice(0, 12), type: name.endsWith('.css') ? 'css' : 'js' };
+    files.set(name, asset);
+    return asset;
+  };
+  for (const name of raw.keys()) build(name);
+  const index = readFileSync(join(dir, 'index.html'), 'utf8')
+    .replace(/(["'])\/(app\.js|styles\.css)\1/g, (all, quote, name) => `${quote}/${name}?v=${files.get(name).v}${quote}`);
+  return { files, index };
+}
 
 /** Avatares só para quem entrou: o navegador guarda, a CDN não. */
 const privateCache = (res) => res.setHeader('Cache-Control', 'private, max-age=604800');
@@ -270,11 +293,19 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   });
 
   app.get('/assets/model-viewer.min.js', (_req, res) =>
-    res.sendFile(file('../node_modules/@google/model-viewer/dist/model-viewer.min.js')));
+    res.sendFile(file('../node_modules/@google/model-viewer/dist/model-viewer.min.js'), { maxAge: '7d' }));
   // Fonte, ícones e imagens não mudam entre publicações: a CDN e o navegador guardam por 7 dias.
   // app.js, styles.css e index.html são conferidos sempre, para a versão nova chegar na hora.
   app.use('/assets/manrope', express.static(file('../node_modules/@fontsource-variable/manrope/files/'), { maxAge: '7d' }));
   app.use('/assets/icons', express.static(file('../node_modules/lucide-static/icons/'), { maxAge: '7d' }));
+  let assets = versionAssets(file('../public/'));
+  const fresh = () => (production ? assets : (assets = versionAssets(file('../public/'))));
+  app.get(['/', '/index.html'], (_req, res) => res.set('Cache-Control', 'no-cache').type('html').send(fresh().index));
+  app.get(/^\/[\w-]+\.(?:js|css)$/, (req, res, next) => {
+    const asset = fresh().files.get(req.path.slice(1));
+    if (!asset) return next();
+    res.set('Cache-Control', req.query.v === asset.v ? 'public, max-age=31536000, immutable' : 'no-cache').type(asset.type).send(asset.body);
+  });
   app.use(express.static(file('../public/'), { setHeaders: (res, path) => {
     if (/\.(svg|png|jpe?g|webp|gif|woff2?|glb)$/i.test(path)) res.setHeader('Cache-Control', 'public, max-age=604800');
     else res.setHeader('Cache-Control', 'no-cache');
