@@ -168,6 +168,21 @@ function applyBackground(prefs) {
   else html.style.removeProperty('--bg-image');
 }
 
+const PALETTES = [['dourado', 'Dourado GAVYO'], ['tokyo', 'Tokyo Night'], ['cyberpunk', 'Cyberpunk']];
+const readPalette = () => { try { return localStorage.getItem('gavyo-palette') || 'dourado'; } catch { return 'dourado'; } };
+function applyPalette(name) {
+  const palette = PALETTES.some(([key]) => key === name) ? name : 'dourado';
+  if (palette === 'dourado') delete document.documentElement.dataset.palette; else document.documentElement.dataset.palette = palette;
+  try { localStorage.setItem('gavyo-palette', palette); } catch { /* sem armazenamento: vale só nesta aba */ }
+}
+applyPalette(readPalette());
+function palettePicker() {
+  const current = readPalette();
+  return `<p class="edit-panel-title" id="palette-title">Cores</p><div class="palette-swatches" role="group" aria-labelledby="palette-title">
+    ${PALETTES.map(([key, label]) => `<button type="button" class="palette-swatch" data-action="set-palette" data-palette="${key}" aria-pressed="${current === key}">
+      <span class="palette-dots" aria-hidden="true"><i></i><i></i><i></i></span>${label}</button>`).join('')}</div>`;
+}
+
 function backgroundPicker() {
   const prefs = board.preferences || {};
   const current = prefs.background || 'noite';
@@ -337,6 +352,7 @@ function renderShell() {
         <h2 id="profile-name">${escape(board.user.name)}</h2>
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
         ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
+        <div id="palette-slot">${palettePicker()}</div>
         <div id="bg-slot">${backgroundPicker()}</div>
         <div class="notify-pref">${notifyPrefButton()}</div>
       </div>
@@ -1946,6 +1962,10 @@ document.addEventListener('click', async (event) => {
       openPopover.querySelector(`[data-offset="${control.dataset.offset}"]`)?.focus({ preventScroll: true });
     } else if (action === 'task-day' || action === 'task-clear-day') {
       await pickValue('due', control.dataset.date || '', openPopover.dataset.card);
+    } else if (action === 'set-palette') {
+      applyPalette(control.dataset.palette);
+      root.querySelector('#palette-slot').innerHTML = palettePicker();
+      root.querySelector(`[data-action=set-palette][data-palette="${control.dataset.palette}"]`)?.focus();
     } else if (action === 'step-details') {
       const panel = dialog.querySelector(`#step-${control.dataset.step}`);
       const opening = panel.hidden;
