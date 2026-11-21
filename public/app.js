@@ -9,7 +9,7 @@ const notice = document.querySelector('#notice');
 const scrim = Object.assign(document.createElement('div'), { className: 'task-scrim', hidden: true });
 document.body.append(scrim);
 scrim.addEventListener('click', () => dialog.close());
-dialog.addEventListener('close', () => { scrim.hidden = true; });
+dialog.addEventListener('close', () => { scrim.hidden = true; void sendPresence(); });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
@@ -276,6 +276,7 @@ function navigate(nextView) {
   const previous = root.querySelector('.nav-pill')?.getBoundingClientRect();
   view = nextView;
   contextEditing = false;
+  setTimeout(sendPresence, 0);
   search = '';
   blockedOnly = false;
   renderShell();
@@ -428,6 +429,7 @@ function muralTemplate(scoped) {
       </span>
       <span class="figure-name">${escape(member.id === board.user.id ? `${member.name} (você)` : member.name)}</span>
       <span class="figure-load">${load}${stuck ? ` · <b>${stuck} travado${stuck > 1 ? 's' : ''}</b>` : ''}</span>
+      <span class="figure-presence" aria-live="off"></span>
     </button></li>`;
   }).join('');
   const loose = scoped.filter((card) => !card.assigneeId && card.status !== 'done').length;
@@ -572,6 +574,7 @@ function renderContents() {
   }
   const slot = document.querySelector('#mural-slot');
   if (slot) slot.innerHTML = view === 'board' ? muralTemplate(scoped) : '';
+  if (slot && view === 'board') paintPresence();
   content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
     const inStage = cards.filter((card) => card.status === key);
     return `<section class="column" data-status="${key}" aria-label="${label}">
@@ -718,7 +721,8 @@ function showCard(card, origin, focus = true) {
   const done = card.checklist.filter((item) => item.done).length;
   const due = dueLabel(card);
   const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
-    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>`;
+    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>
+    <p class="task-viewers" aria-live="polite"></p>`;
   const more = `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
       ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
       ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
@@ -807,6 +811,7 @@ function showCard(card, origin, focus = true) {
       </form>
     </section>`, focus ? '#dialog-title' : null, { details, footer, origin, more });
   paintTrails(dialog);
+  if (focus) void sendPresence(); else paintPresence();
 }
 
 function setTaskSection(section, step = 'title') {
@@ -1278,6 +1283,7 @@ document.addEventListener('submit', async (event) => {
       await request('/login', 'POST', { memberId: form.dataset.member, pin: data.pin });
       await refresh({ shell: true });
       autoRefresh();
+      void sendPresence();
     } else if (kind === 'change-pin') {
       if (data.newPin !== data.confirmPin) throw new Error('Os PINs novos precisam ser iguais.');
       await request('/pin', 'POST', { currentPin: data.currentPin, newPin: data.newPin });
@@ -1448,6 +1454,49 @@ function syncOpenCard() {
   if (focusedSection) dialog.querySelector(`.inspector-nav [data-section="${focusedSection}"]`)?.focus({ preventScroll: true });
 }
 
+/* ---------- Quem está online ---------- */
+let online = [];
+let presenceTimer;
+const openCardId = () => (dialog.open ? dialog.querySelector('[data-form=comment]')?.dataset.card || null : null);
+const presenceOf = (id) => online.find((item) => item.id === id && Date.now() - item.at < 45000);
+
+async function sendPresence() {
+  clearTimeout(presenceTimer);
+  if (!board) return;
+  try {
+    online = await request('/presence', 'POST', { view, cardId: openCardId(), away: document.hidden });
+    paintPresence();
+  } catch { /* sem internet: tenta no próximo sinal */ }
+  presenceTimer = setTimeout(sendPresence, document.hidden ? 30000 : 15000);
+}
+
+function presenceLabel(member) {
+  const here = presenceOf(member.id);
+  if (!here) return '';
+  if (here.away) return 'Com o quadro em outra aba';
+  const card = here.cardId && cardById(here.cardId);
+  return card ? `Vendo ${card.key || card.title}` : { context: 'Lendo o contexto', mine: 'Nas tarefas dele', archive: 'No arquivo' }[here.view] || 'No quadro agora';
+}
+
+/** Atualiza só as bolinhas e o "quem mais está aqui", sem redesenhar o quadro. */
+function paintPresence() {
+  for (const figure of root.querySelectorAll('.figure[data-person]')) {
+    const member = board.members.find((item) => item.id === figure.dataset.person);
+    const here = member && member.id !== board.user.id ? presenceOf(member.id) : null;
+    const isMe = member?.id === board.user.id;
+    figure.dataset.online = here ? (here.away ? 'away' : 'true') : isMe ? 'true' : 'false';
+    const label = isMe ? 'Você, agora' : presenceLabel(member);
+    figure.querySelector('.figure-presence').textContent = label;
+    figure.title = label || `${member?.name} não está no quadro agora`;
+  }
+  const slot = dialog.open && dialog.querySelector('.task-viewers');
+  if (slot) {
+    const others = board.members.filter((member) => member.id !== board.user.id && presenceOf(member.id)?.cardId === openCardId());
+    slot.innerHTML = others.length ? `<span class="viewers-faces">${others.map((member) => face(member, 'card-face')).join('')}</span>
+      <span>${others.map((member) => escape(member.name.split(' ')[0])).join(' e ')} também ${others.length === 1 ? 'está' : 'estão'} aqui</span>` : '';
+  }
+}
+
 const boardSyncDelay = 3000;
 let autoTimer;
 let syncingBoard = false;
@@ -1455,6 +1504,8 @@ let nextActivityRender = 0;
 
 function stopBoardSync() {
   clearTimeout(autoTimer);
+  clearTimeout(presenceTimer);
+  online = [];
   board = null;
   boardTag = null;
   boardRevision++;
@@ -1511,7 +1562,7 @@ async function syncBoard() {
   }
 }
 
-document.addEventListener('visibilitychange', () => autoRefresh(0));
+document.addEventListener('visibilitychange', () => { autoRefresh(0); void sendPresence(); });
 window.addEventListener('online', () => autoRefresh(0));
 
 async function start() {
@@ -1519,6 +1570,7 @@ async function start() {
     if (!(await request('/session')).signedIn) return login();
     await refresh({ shell: true });
     autoRefresh();
+    void sendPresence();
   }
   catch (error) {
     if (error.status === 401) login();

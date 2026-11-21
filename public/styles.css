@@ -1124,3 +1124,22 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
   .ctx-link-row{grid-template-columns:1fr auto}
   .ctx-link-row [name=link-url]{grid-column:1}
 }
+
+/* ---------- Quem está online ---------- */
+.figure-presence{min-height:1.1em;color:var(--green);font-size:.72rem;font-weight:650;text-align:center;line-height:1.2}
+.figure[data-online=away] .figure-presence{color:var(--muted)}
+.figure[data-online=false] .figure-presence{display:none}
+.figure-stage::after{
+  content:"";position:absolute;left:calc(50% + 24px);bottom:14px;width:12px;height:12px;border-radius:50%;
+  background:var(--green);box-shadow:0 0 0 3px var(--background);opacity:0;scale:.4;transition:opacity .3s,scale .35s var(--ease)
+}
+.figure[data-online=true] .figure-stage::after{opacity:1;scale:1;animation:online-breathe 2.6s ease-in-out infinite}
+.figure[data-online=away] .figure-stage::after{opacity:1;scale:1;background:transparent;box-shadow:inset 0 0 0 2px var(--muted),0 0 0 3px var(--background)}
+.figure[data-online=false] .figure-art{filter:drop-shadow(0 8px 10px #000a) grayscale(.55) brightness(.8)}
+@keyframes online-breathe{50%{box-shadow:0 0 0 3px var(--background),0 0 0 6px #a6c48f33}}
+.task-viewers{display:flex;align-items:center;gap:8px;margin:8px 0 0;color:var(--green);font-size:.78rem;font-weight:650}
+.task-viewers:empty{display:none}
+.viewers-faces{display:flex}
+.viewers-faces .card-face{width:22px;height:22px;box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--green)}
+.viewers-faces .card-face+.card-face{margin-left:-6px}
+@media(prefers-reduced-motion:reduce){.figure[data-online=true] .figure-stage::after{animation:none}}

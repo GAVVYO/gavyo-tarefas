@@ -21,6 +21,7 @@ const MAX_IMAGE = 8 * 1024 * 1024;
 
 export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads' } = {}) {
   const uploadRoot = resolve(uploads);
+  const presence = new Map();
   const app = express();
   const attempts = new Map();
 
@@ -152,6 +153,21 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     const bytes = await readFile(join(uploadRoot, id, name)).catch(() => null);
     if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
     res.set({ 'Content-Type': attachment.type, 'Cache-Control': 'private, max-age=31536000, immutable' }).send(bytes);
+  });
+
+  /**
+   * Quem está com o quadro aberto agora (memória do servidor, sem banco): cada aba manda um sinal
+   * a cada 15 s com a tela e o cartão que está vendo. Some depois de 45 s sem sinal.
+   */
+  app.post('/api/presence', async (req, res) => {
+    const { view, cardId, away } = z.object({
+      view: z.enum(['board', 'mine', 'archive', 'context']).optional(),
+      cardId: z.uuid().nullable().optional(), away: z.boolean().optional()
+    }).parse(req.body);
+    const now = Date.now();
+    presence.set(req.actor.id, { at: now, view: view || 'board', cardId: cardId || null, away: Boolean(away) });
+    for (const [id, item] of presence) if (now - item.at > 45000) presence.delete(id);
+    res.json([...presence].map(([id, item]) => ({ id, ...item })));
   });
 
   app.get('/api/projects/:id/context', async (req, res) => res.json(await store.projectContext(z.uuid().parse(req.params.id))));

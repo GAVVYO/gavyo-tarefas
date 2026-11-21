@@ -248,3 +248,29 @@ test('cada cartão ganha um número do projeto (GA-1, GA-2) e cartões antigos s
   assert.equal(numbered.key, 'GA-3');
   await database.close();
 });
+
+test('presença: quem mandou sinal aparece como online, com a tela e o cartão que está vendo', async (t) => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const enter = async (name) => {
+    const member = await store.createMember({ name });
+    const r = await fetch(origin + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' }) });
+    return { member, cookie: r.headers.get('set-cookie').split(';')[0] };
+  };
+  const felipe = await enter('Felipe');
+  const bola = await enter('Bola');
+  const ping = (who, body) => fetch(origin + '/api/presence', { method: 'POST', headers: { cookie: who.cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const cardId = crypto.randomUUID();
+  assert.equal((await ping(bola, { view: 'board', cardId })).status, 200);
+  const list = await (await ping(felipe, { view: 'context' })).json();
+  assert.deepEqual(list.map((item) => item.id).sort(), [felipe.member.id, bola.member.id].sort());
+  assert.equal(list.find((item) => item.id === bola.member.id).cardId, cardId);
+  assert.equal((await fetch(origin + '/api/presence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+});
