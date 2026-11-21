@@ -13,7 +13,7 @@ dialog.addEventListener('close', () => { scrim.hidden = true; closeEditor(); voi
 // Com a ficha aberta, o resto da página fica inerte: Tab e leitor de tela não vão parar atrás do fundo escuro.
 new MutationObserver(() => { root.inert = dialog.open; }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
-const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
+const priorities = { alta: 'Urgente', normal: 'Normal', baixa: 'Baixa' };
 let board;
 let loginProfiles = [];
 let view = 'board';
@@ -251,7 +251,7 @@ function renderShell() {
     <div id="mural-slot" class="mural-slot"></div>
   </section>
   <div class="filters" ${view === 'context' ? 'hidden' : ''}>
-    ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
+    ${view !== 'archive' ? button('Travados', 'filter', 'octagon-pause', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
   </div>
@@ -910,7 +910,7 @@ function renderContents() {
   summary.textContent = view === 'archive'
     ? countLabel(scoped.length, 'cartão arquivado', 'cartões arquivados')
     : [countLabel(scoped.length, 'cartão', 'cartões'), countLabel(done, 'concluído', 'concluídos'),
-      countLabel(blocked, 'bloqueado', 'bloqueados')].join(' · ');
+      countLabel(blocked, 'travado', 'travados')].join(' · ');
   const filtering = Boolean(needle || (blockedOnly && view !== 'archive'));
   const emptyText = filtering ? 'Nenhum cartão com estes filtros.' : 'Nenhum cartão nesta etapa.';
   if (!board.projects.length && view === 'board') {
@@ -1013,12 +1013,12 @@ const memberNamed = (name) => board.members.find((member) => member.name === nam
 const agentMark = (source) => (AGENTS.includes(source)
   ? `<span class="card-agent" title="Feito pelo ${source}">${icon('bot')}<span>${source}</span></span>` : '');
 
-/** O que mudou, em frase: "mudou a etapa e mexeu no checklist". */
+/** O que mudou, em frase: "mudou a etapa e mexeu nos passos". */
 const ACTIONS = {
   'Criou o cartão': 'criou o cartão', Título: 'mudou o título', Descrição: 'mudou a descrição',
   Responsável: 'trocou o responsável', Prazo: 'mudou o prazo', Prioridade: 'mudou a prioridade',
-  Etapa: 'mudou a etapa', Bloqueio: 'mexeu no bloqueio', Arquivo: 'arquivou ou restaurou',
-  Checklist: 'mexeu no checklist', Comentário: 'comentou', Print: 'pôs um print', 'Tirou print': 'tirou um print'
+  Etapa: 'mudou a etapa', Bloqueio: 'mudou o travamento', Travado: 'mudou o travamento', Arquivo: 'arquivou ou restaurou',
+  Checklist: 'mexeu nos passos', Passos: 'mexeu nos passos', Comentário: 'comentou', Print: 'pôs um print', 'Tirou print': 'tirou um print'
 };
 function actionSentence(action) {
   const parts = action.split(', ').map((part) => ACTIONS[part] || part.toLowerCase());
@@ -1040,8 +1040,11 @@ function propChip(card, prop) {
     priority: card.priority === 'alta' ? `${icon('flag')}<span class="urgent-text">Urgente</span>` : `${icon('flag')}<span class="${card.priority === 'baixa' ? 'muted' : ''}">${priorities[card.priority]}</span>`,
     blocked: card.blocked ? `${icon('octagon-pause')}<span class="blocked-text">Travado</span>` : `${icon('octagon-pause')}<span class="muted">Travar</span>`
   }[prop];
-  const labels = { status: 'Etapa', assignee: 'Quem faz', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
-  return `<span class="chip-prop" data-prop="${prop}" title="${labels[prop]}">${content}</span>`;
+  const labels = { status: 'Etapa', assignee: 'Responsável', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
+  // Clicar na pílula abre direto o painel daquele campo (antes ela parecia botão mas não fazia nada).
+  if (card.archived) return `<span class="chip-prop" data-prop="${prop}" title="${labels[prop]}">${content}</span>`;
+  return `<button type="button" class="chip-prop" data-action="edit-opt" data-prop="${prop}" data-card="${card.id}"
+    title="Mudar ${labels[prop].toLocaleLowerCase('pt-BR')}" aria-label="${labels[prop]}: ${escape(content.replace(/<[^>]+>/g, '').trim())}. Mudar">${content}</button>`;
 }
 
 function showCard(card, origin, focus = true) {
@@ -1088,6 +1091,7 @@ function showCard(card, origin, focus = true) {
       <ul class="steps">${card.checklist.map((item, index) => `<li class="step-row"><button type="button" class="step" data-action="toggle-check"
         data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
         <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button>
+        ${card.archived ? '' : `<button type="button" class="step-remove step-edit" data-action="edit-step" data-card="${card.id}" data-index="${index}" aria-label="Corrigir passo ${escape(item.title)}">${icon('pencil')}</button>`}
         ${card.archived ? '' : `<button type="button" class="step-remove" data-action="remove-step" data-card="${card.id}" data-index="${index}" aria-label="Tirar passo ${escape(item.title)}">${icon('x')}</button>`}</li>`).join('')}</ul>
       ${card.archived ? '' : `<label class="step-add">${icon('plus')}<input data-add-step="${card.id}" maxlength="240" placeholder="Adicionar passo e Enter" aria-label="Novo passo"></label>`}
     </section>
@@ -1214,9 +1218,9 @@ function showPopover(trigger) {
 
 /* ---------- Modo editar: a ficha vai para a esquerda, as opções descem em cascata à direita ---------- */
 const EDIT_OPTIONS = [
-  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Quem faz', 'user-round'],
+  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Responsável', 'user-round'],
   ['due', 'Prazo', 'calendar-days'], ['priority', 'Prioridade', 'flag'], ['status', 'Etapa', 'circle-dashed'],
-  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Imagem', 'image-plus']
+  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Prints', 'image-plus']
 ];
 let editor = null;
 let editorCloseTimer;
@@ -1615,6 +1619,35 @@ document.addEventListener('keydown', async (event) => {
   }
 });
 
+/** Corrigir o texto de um passo: Enter ou sair do campo salva, Esc desiste. */
+function editStep(control) {
+  const card = cardById(control.dataset.card);
+  const index = Number(control.dataset.index);
+  const row = control.closest('.step-row');
+  if (!card || !row || row.querySelector('.step-input')) return;
+  const input = Object.assign(document.createElement('input'), { className: 'step-input', value: card.checklist[index].title, maxLength: 240 });
+  input.setAttribute('aria-label', 'Texto do passo');
+  row.querySelector('.step').hidden = true;
+  row.prepend(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const title = input.value.trim();
+    if (!save || !title || title === card.checklist[index].title) { input.remove(); row.querySelector('.step').hidden = false; control.focus(); return; }
+    try {
+      await saveCard(card.id, { checklist: card.checklist.map((item, i) => (i === index ? { ...item, title } : item)) }, 'Passo corrigido.');
+    } catch (error) { message(error.message); input.remove(); row.querySelector('.step').hidden = false; }
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); void finish(true); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); void finish(false); }
+  });
+  input.addEventListener('blur', () => void finish(true));
+}
+
 // No chat: Enter envia, Shift+Enter pula linha.
 document.addEventListener('keydown', (event) => {
   const box = event.target.closest?.('.composer textarea, .hub-composer textarea');
@@ -1772,7 +1805,7 @@ document.addEventListener('click', async (event) => {
       message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
     } else if (action === 'open-notice') {
       dismissBubble(control.closest('.bubble'));
-      openFromNotice(card);
+      if (control.dataset.project) openProjectChat(control.dataset.project); else openFromNotice(card);
     } else if (action === 'close-notice') {
       dismissBubble(control.closest('.bubble'));
     } else if (action === 'notify-ask') {
@@ -1781,6 +1814,8 @@ document.addEventListener('click', async (event) => {
       if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
     } else if (action === 'context-edit') {
       await editContext(control.dataset.focus);
+    } else if (action === 'edit-step') {
+      editStep(control);
     } else if (action === 'hub-sector') {
       hubSector = control.dataset.sector;
       contextEditing = false;
@@ -2134,6 +2169,25 @@ function detectNews(before, after) {
       notify({ card, who: last.actor, source: last.source, text: `Passou ${card.key || 'um cartão'} para você.`, kind: 'cartão' });
     }
   }
+  // Mensagem nova no chat de um projeto: avisa quem não está olhando esse chat agora.
+  for (const [pid, item] of Object.entries(after.messages || {})) {
+    if (!item || before.messages?.[pid]?.id === item.id || !before.messages) continue;
+    if (item.actor === me.name && item.source === 'Web') continue;
+    const watching = !document.hidden && view === 'context' && hubSector === 'atividade' && projectId === pid;
+    if (watching) continue;
+    const name = after.projects.find((project) => project.id === pid)?.name || 'projeto';
+    notify({ card: { id: `project:${pid}`, key: '', title: `chat do ${name}` }, project: pid, who: item.actor, source: item.source, text: item.text, kind: 'projeto' });
+  }
+}
+
+/** Abre a Central no chat do projeto (aviso de mensagem de projeto). */
+function openProjectChat(pid) {
+  if (!board.projects.some((project) => project.id === pid)) return;
+  dialog.close();
+  projectId = pid;
+  hubSector = 'atividade';
+  if (view === 'context') renderContents(); else navigate('context');
+  setTimeout(() => document.querySelector('.hub-composer textarea')?.focus(), 400);
 }
 
 function openFromNotice(cardId) {
@@ -2153,7 +2207,7 @@ function notify(news) {
       const shown = new Notification(`${by} · ${news.card.key || news.card.title}`, {
         body: news.text.slice(0, 160), icon: '/aguia-dourada.svg', tag: `${news.card.id}-${news.kind}`
       });
-      shown.onclick = () => { window.focus(); openFromNotice(news.card.id); shown.close(); };
+      shown.onclick = () => { window.focus(); if (news.project) openProjectChat(news.project); else openFromNotice(news.card.id); shown.close(); };
     }
     return;
   }
@@ -2167,9 +2221,9 @@ function showBubble(news, who, by) {
   bubble.className = 'bubble';
   bubble.setAttribute('role', 'status');
   bubble.innerHTML = `${face(who, 'card-face')}
-    <div class="bubble-body"><p class="bubble-by"><b>${escape(by)}</b> em ${escape(news.card.key || '')} ${escape(news.card.title.slice(0, 40))}</p>
+    <div class="bubble-body"><p class="bubble-by"><b>${escape(by)}</b> ${news.project ? 'no' : 'em'} ${escape(news.card.key || '')} ${escape(news.card.title.slice(0, 40))}</p>
       <p class="bubble-text">${escape(news.text.slice(0, 140))}${news.text.length > 140 ? '…' : ''}</p></div>
-    <button type="button" class="bubble-open" data-action="open-notice" data-card="${news.card.id}">Abrir</button>
+    <button type="button" class="bubble-open" data-action="open-notice" data-card="${news.card.id}" ${news.project ? `data-project="${news.project}"` : ''}>Abrir</button>
     <button type="button" class="bubble-close" data-action="close-notice" aria-label="Fechar aviso">${icon('x')}</button>`;
   // 1º o próprio cartão que recebeu a mensagem; se ele não estiver à vista, o avatar de quem mandou; senão, o canto.
   const cardEl = root.querySelector(`.card[data-id="${news.card.id}"]`);

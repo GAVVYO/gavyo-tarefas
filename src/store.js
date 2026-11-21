@@ -246,8 +246,8 @@ export function createStore({ query }) {
       }
       const labels = {
         title: 'Título', description: 'Descrição', assigneeId: 'Responsável', due: 'Prazo',
-        priority: 'Prioridade', status: 'Etapa', blocked: 'Bloqueio', archived: 'Arquivo',
-        checklist: 'Checklist'
+        priority: 'Prioridade', status: 'Etapa', blocked: 'Travado', archived: 'Arquivo',
+        checklist: 'Passos'
       };
       const actions = changes.map(([key]) => labels[key]);
       if (comment) {
@@ -465,12 +465,23 @@ export function createStore({ query }) {
     const rows = await query('SELECT data FROM project_messages WHERE project_id = ? ORDER BY at DESC LIMIT 200', [projectId]);
     return rows.map((row) => JSON.parse(row.data)).reverse();
   }
+  /** Última mensagem de cada projeto, em memória: vai junto com o quadro para avisar quem não está na Central. */
+  let latest = null;
+  async function latestMessages() {
+    if (!latest) {
+      latest = {};
+      const rows = await query('SELECT project_id, data FROM project_messages ORDER BY at DESC LIMIT 500');
+      for (const row of rows) if (!latest[row.project_id]) latest[row.project_id] = JSON.parse(row.data);
+    }
+    return latest;
+  }
   async function addProjectMessage(projectId, input, actor) {
     await contextRow(projectId);
     const { text, ref } = messageInput.parse(input);
     const message = { id: randomUUID(), text, ref: ref || null, ...event(actor, 'Mensagem') };
     delete message.action;
     await query('INSERT INTO project_messages (id, project_id, at, data) VALUES (?, ?, ?, ?)', [message.id, projectId, Date.now(), JSON.stringify(message)]);
+    if (latest) latest[projectId] = message;
     return message;
   }
   async function restoreContext(projectId, version, input, actor) {
@@ -484,5 +495,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

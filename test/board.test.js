@@ -103,6 +103,8 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   const conversa = await request(`/api/projects/${project.id}/messages`, { method: 'POST', headers, body: { text: 'Valeu!' } });
   assert.equal(conversa.status, 200);
   const mensagens = (await request(`/api/projects/${project.id}/messages`, { headers })).body;
+  // A última mensagem do projeto vai junto com o quadro (para avisar quem está em outra tela).
+  assert.equal((await request('/api/board', { headers })).body.messages[project.id].text, 'Valeu!');
   assert.deepEqual(mensagens.map((item) => item.source), ['Codex', 'Web']);
   const atividade = (await request(`/api/projects/${project.id}/activity`, { headers })).body;
   assert.ok(atividade.items.every((item) => ['commit', 'pr'].includes(item.kind)));
