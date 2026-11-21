@@ -1897,3 +1897,8 @@ dialog.team-chat[open]{overflow:hidden;box-shadow:0 24px 80px #0009;border:1px s
 .team-chat-composer .team-chat-upload{background:transparent;border:0;color:var(--muted)}
 .team-chat-composer .team-chat-upload:hover{background:var(--hover);color:var(--ink)}
 .team-chat-composer .team-chat-send{font-size:22px}
+
+/* Uma linha alinhada aos controles; linhas novas ampliam o campo para cima. */
+.team-chat-form .team-chat-composer{gap:8px;padding:6px}
+.team-chat-form .team-chat-composer textarea{height:44px;min-height:44px;max-height:none;line-height:24px;padding:10px 2px;overflow-y:hidden;resize:none}
+.team-chat-composer .team-chat-upload,.team-chat-composer .team-chat-send{margin-block:4px}

@@ -36,7 +36,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     <label for="team-chat-text">Mensagem para a equipe</label>
     <div class="team-chat-tools team-chat-composer">
       <label class="btn team-chat-upload" title="Adicionar imagem"><span aria-hidden="true">+</span><input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
-      <textarea id="team-chat-text" rows="2" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
+      <textarea id="team-chat-text" rows="1" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
       <button class="btn primary team-chat-send" type="submit" aria-label="Enviar mensagem" title="Enviar mensagem"><span aria-hidden="true">↑</span></button>
     </div>
     <div class="team-chat-attachments" aria-live="polite"></div>
@@ -339,6 +339,12 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     }
   }
 
+  function resizeComposer() {
+    input.style.height = 'auto';
+    const limit = Math.max(44, Math.min(200, (window.visualViewport?.height || innerHeight) * .28));
+    input.style.height = `${Math.min(input.scrollHeight, limit)}px`;
+    input.style.overflowY = input.scrollHeight > limit ? 'auto' : 'hidden';
+  }
   function fitViewport() {
     const vp = window.visualViewport;
     if (vp && matchMedia('(max-width: 640px)').matches) {
@@ -368,6 +374,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       window.visualViewport?.removeEventListener('resize', fitViewport);
       window.visualViewport?.removeEventListener('scroll', fitViewport);
     };
+    resizeComposer();
     input.focus({ preventScroll: true });
     void load();
   }
@@ -413,7 +420,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       await request('/team/messages', 'POST', payload, { signal: AbortSignal.timeout(15000) });
       if (current !== session) return;
       // Buscar pelo cursor mantém a ordem se outra pessoa enviou durante a escrita.
-      input.value = ''; attachments = []; mentioned = []; renderPending();
+      input.value = ''; resizeComposer(); attachments = []; mentioned = []; renderPending();
       pendingMessage = null;
       errorBox.hidden = true;
       retrySend = false;
@@ -428,7 +435,8 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       }
     }
   });
-  input.addEventListener('input', () => input.setCustomValidity(''));
+  input.addEventListener('input', () => { input.setCustomValidity(''); resizeComposer(); });
+  window.addEventListener('resize', () => { if (panel.open) resizeComposer(); });
 
   // Captura antes dos atalhos do cartão, menus e visualizador de prints.
   document.addEventListener('keydown', event => {
@@ -458,7 +466,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     clearDrag();
     attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending();
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
-    input.value = ''; input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
+    input.value = ''; resizeComposer(); input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
     log.replaceChildren(); older.hidden = true; empty.hidden = false; empty.textContent = 'Carregando mensagens…';
     errorBox.hidden = true; retrySend = false; feedback.textContent = '';
     liveCursor = 0; unreadCount = 0;
