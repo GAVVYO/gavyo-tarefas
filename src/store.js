@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { createFinance } from './finance.js';
 
 // Mensagens de validação em português (também chegam às IAs pelo MCP).
 z.config(z.locales.pt());
