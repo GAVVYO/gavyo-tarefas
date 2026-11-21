@@ -560,7 +560,7 @@ async function loadHub(id) {
   } catch (error) {
     message(error.message);
   } finally {
-    if (view === 'context' && hubSector === 'atividade') hubTimer = setTimeout(() => loadHub(projectId), document.hidden ? 30000 : 8000);
+    if (view === 'context' && hubSector === 'atividade') hubTimer = setTimeout(() => loadHub(projectId), document.hidden ? 60000 : 15000);
   }
 }
 
@@ -2037,7 +2037,7 @@ async function sendPresence() {
     online = await request('/presence', 'POST', { view, cardId: openCardId(), away: document.hidden });
     paintPresence();
   } catch { /* sem internet: tenta no próximo sinal */ }
-  presenceTimer = setTimeout(sendPresence, document.hidden ? 30000 : 15000);
+  presenceTimer = setTimeout(sendPresence, document.hidden ? 40000 : 30000);
 }
 
 function presenceLabel(member) {
@@ -2186,7 +2186,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && unread) { unread = 0; document.title = baseTitle; }
 });
 
-const boardSyncDelay = 3000;
+const boardSyncDelay = 5000;
 let autoTimer;
 let syncingBoard = false;
 let nextActivityRender = 0;
@@ -2210,7 +2210,7 @@ function endBoardSession() {
 /** Em outra aba continua buscando, mais devagar, para os avisos do navegador chegarem. */
 function autoRefresh(delay = boardSyncDelay) {
   clearTimeout(autoTimer);
-  if (board) autoTimer = setTimeout(syncBoard, document.hidden ? Math.max(delay, 20000) : delay);
+  if (board) autoTimer = setTimeout(syncBoard, document.hidden ? Math.max(delay, 60000) : delay);
 }
 
 function boardIsBusy() {
@@ -2254,7 +2254,11 @@ async function syncBoard() {
   }
 }
 
-document.addEventListener('visibilitychange', () => { autoRefresh(0); void sendPresence(); });
+document.addEventListener('visibilitychange', () => {
+  autoRefresh(0);
+  void sendPresence();
+  if (!document.hidden && view === 'context' && hubSector === 'atividade' && projectId) void loadHub(projectId);
+});
 window.addEventListener('online', () => autoRefresh(0));
 
 async function start() {
