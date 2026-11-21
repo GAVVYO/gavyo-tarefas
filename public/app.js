@@ -1,4 +1,3 @@
-import { setupTaskWindow } from './task-window.js';
 import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
@@ -6,7 +5,11 @@ import { avatarFor, setupProfileDock } from './profile-dock.js';
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
 const notice = document.querySelector('#notice');
-setupTaskWindow(dialog);
+// A ficha abre no centro sobre um véu escuro; clicar fora fecha (sem arrastar nem encaixar do lado).
+const scrim = Object.assign(document.createElement('div'), { className: 'task-scrim', hidden: true });
+document.body.append(scrim);
+scrim.addEventListener('click', () => dialog.close());
+dialog.addEventListener('close', () => { scrim.hidden = true; });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
@@ -480,7 +483,7 @@ function paintTrails(scope) {
   for (const trail of scope.querySelectorAll('.trail')) trail.style.setProperty('--p', trail.dataset.progress);
 }
 
-function openDialog(title, html, focusSelector, { details = '', footer = '', origin } = {}) {
+function openDialog(title, html, focusSelector, { details = '', footer = '', origin, more = '' } = {}) {
   const task = Boolean(details);
   delete dialog.dataset.editing;
   delete dialog.dataset.editorStep;
@@ -488,18 +491,12 @@ function openDialog(title, html, focusSelector, { details = '', footer = '', ori
   const opening = !dialog.open;
   if (opening) restoreFocus = document.activeElement;
   dialog.classList.toggle('task-dialog', task);
-  const tools = task ? `<div class="task-window-tools">
-    <button class="btn tile ghost task-dock-control" type="button" data-task-dock="left" aria-label="Encaixar à esquerda" title="Encaixar à esquerda">${taskIcon('left')}</button>
-    <button class="btn tile ghost task-dock-control" type="button" data-task-dock="right" aria-label="Encaixar à direita" title="Encaixar à direita">${taskIcon('right')}</button>
-    ${iconButton('Fechar', 'close', 'x')}
-  </div>` : iconButton('Fechar', 'close', 'x');
-  dialog.innerHTML = `<header class="dialog-head ${task ? 'task-drag' : ''}">
-    ${task ? `<span class="task-grip" title="Arraste a ficha">${taskIcon('grip')}</span>` : ''}
+  const tools = task ? `<div class="task-window-tools">${more}${iconButton('Fechar', 'close', 'x')}</div>` : iconButton('Fechar', 'close', 'x');
+  dialog.innerHTML = `<header class="dialog-head">
     <div class="dialog-headline">
     <h2 id="dialog-title" tabindex="-1">${title}</h2>${details}</div>${tools}</header>
-    <div class="dialog-body">${html}</div>${footer}${task ? `
-      <span class="task-snap-hawk" aria-hidden="true"></span>
-      <button class="task-resize" type="button" aria-label="Redimensionar ficha com as setas" title="Puxe para redimensionar">${taskIcon('resize')}</button>` : ''}`;
+    <div class="dialog-body">${html}</div>${footer}`;
+  document.querySelector('.task-scrim')?.toggleAttribute('hidden', !task);
   if (opening) {
     if (task) dialog.show(); else dialog.showModal();
     if (origin && dialog.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -538,10 +535,10 @@ function linkify(text) {
 }
 
 const editorSteps = [
-  ['title', 'Título', 'task'], ['description', 'Descrição', 'text'],
-  ['assignee', 'Responsável', 'person'], ['due', 'Prazo', 'date'],
-  ['priority', 'Prioridade', 'priority'], ['status', 'Etapa', 'stage'],
-  ['blocked', 'Bloqueio', 'block'], ['checklist', 'Checklist', 'checks']
+  ['title', 'Qual é a tarefa?', 'task'], ['description', 'O que precisa ser feito?', 'text'],
+  ['assignee', 'Quem vai fazer?', 'person'], ['due', 'Até quando?', 'date'],
+  ['priority', 'É urgente?', 'priority'], ['status', 'Em que etapa está?', 'stage'],
+  ['blocked', 'Tem algo travando?', 'block'], ['checklist', 'Quais são os passos?', 'checks']
 ];
 
 function editArea(step, content, className = '') {
@@ -572,12 +569,12 @@ function editorPanels(card) {
     priority: taskOptions('priority', Object.entries(priorities).map(([id, label]) => [id, label, taskIcon('priority')]), card.priority),
     status: card.archived ? '<p class="muted">Restaure o cartão para mudar a etapa.</p>'
       : taskOptions('status', Object.entries(stages).map(([id, label]) => [id, label, taskIcon('stage')]), card.status),
-    blocked: field('Motivo do bloqueio', `<textarea class="task-writing" name="blocked" maxlength="500" placeholder="Qual é o impedimento?">${escape(card.blocked)}</textarea>`),
+    blocked: `<textarea class="task-writing" name="blocked" maxlength="500" aria-label="O que está travando" placeholder="Deixe vazio se nada está travando.">${escape(card.blocked)}</textarea>`,
     checklist: `<div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
       ${button('Adicionar passo', 'add-check', 'plus')}`
   };
-  return editorSteps.map(([key, label, glyph]) => `<section class="editor-step" data-editor-step="${key}" aria-label="${label}" hidden>
-    <h3 class="editor-step-title">${taskIcon(glyph)} ${label}</h3>${panels[key]}
+  return editorSteps.map(([key, label]) => `<section class="editor-step" data-editor-step="${key}" aria-label="${label}" hidden>
+    <h3 class="editor-step-title">${label}</h3>${panels[key]}
   </section>`).join('');
 }
 
@@ -615,19 +612,21 @@ function showCard(card, origin, focus = true) {
   const done = card.checklist.filter((item) => item.done).length;
   const due = dueLabel(card);
   const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
-    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>
-    <div class="task-copy">
+    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>`;
+  const more = `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
       ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
       ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
       ${button('Entregar para o assistente', 'copy-brief', 'bot', 'ghost', `data-card="${card.id}"`)}
-    </div>`;
+    </div></details>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
     <div class="inspector-edit-actions" hidden>
       ${button('Cancelar', 'task-cancel', '', 'ghost', `data-card="${card.id}"`)}
-      ${button('Anterior', 'task-step-shift', 'arrow-left', 'ghost', 'data-offset="-1"')}
+      <span class="wizard-dots" aria-hidden="true">${editorSteps.map(([key]) => `<i data-dot="${key}"></i>`).join('')}</span>
+      <span class="wizard-count" aria-live="polite"></span>
+      ${button('Voltar', 'task-step-shift', 'arrow-left', 'ghost', 'data-offset="-1"')}
       ${button('Próxima', 'task-step-shift', 'arrow-right', '', 'data-offset="1"')}
-      <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar alterações</button>
+      <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar</button>
     </div>
   </footer>`;
   const tabs = [
@@ -636,24 +635,21 @@ function showCard(card, origin, focus = true) {
     ['history', 'Histórico', 'history']
   ];
   openDialog(editArea('title', `<span>${escape(card.title)}</span>`, 'task-heading-edit'), `
-    <div class="inspector-overview">
-      <div class="inspector-meta">
-        ${editArea('status', stages[card.status], 'inspector-stage')}
-        ${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
-          ${escape(assignee?.name || 'Sem responsável')}`)}
-        ${editArea("due", `${taskIcon("date")} ${due ? due.text : "Sem prazo"}`)}
-        ${editArea('priority', `${taskIcon('priority')} ${card.priority === 'alta' ? 'Urgente' : `Prioridade ${priorities[card.priority].toLowerCase()}`}`)}
-      </div>
-      <div class="inspector-actions">
-        ${button('Editar', 'task-section', 'pencil', 'inspector-edit ghost', 'data-section="edit"')}
-        ${nextCardAction(card)}
-      </div>
-    </div>
     <nav class="inspector-nav" aria-label="Seções da ficha">
       ${tabs.map(([key, label, glyph]) => button(taskIcon(glyph) + label, 'task-section', '', 'ghost',
         `data-section="${key}" aria-pressed="${key === 'summary'}" aria-controls="task-${key}"`)).join('')}
     </nav>
-    <section class="inspector-section" id="task-summary" data-task-section="summary">
+    <section class="inspector-section summary-grid" id="task-summary" data-task-section="summary">
+      <aside class="props" aria-label="Detalhes do cartão">
+        <dl>
+          <div><dt>Etapa</dt><dd>${editArea('status', `<span class="stage-dot" data-status="${card.status}"></span>${stages[card.status]}`)}</dd></div>
+          <div><dt>Quem faz</dt><dd>${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}${escape(assignee?.name || 'Ninguém ainda')}`)}</dd></div>
+          <div><dt>Prazo</dt><dd>${editArea('due', due ? `<span class="due" data-tone="${due.tone}">${due.text}</span>` : '<span class="props-empty">Sem prazo</span>')}</dd></div>
+          <div><dt>Prioridade</dt><dd>${editArea('priority', card.priority === 'alta' ? '<span class="urgent">Urgente</span>' : priorities[card.priority])}</dd></div>
+        </dl>
+        <div class="props-next">${nextCardAction(card)}</div>
+      </aside>
+      <div class="summary-main">
       ${card.blocked ? `<div class="inspector-block">${icon('octagon-pause')}
         <div><h3>${editArea('blocked', 'Travado')}</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
       <section class="inspector-description">
@@ -679,6 +675,7 @@ function showCard(card, origin, focus = true) {
           data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
           <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button></li>`).join('')}</ul>
       </section>`}
+      </div>
     </section>
     <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
       <div class="thread" id="task-comments">${cardActivity(card)}</div>
@@ -699,12 +696,10 @@ function showCard(card, origin, focus = true) {
     </section>
     <section class="inspector-section" data-task-section="edit" hidden>
       <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
-        <nav class="editor-steps" aria-label="Etapas da edição">${editorSteps.map(([key, label, glyph]) =>
-          button(taskIcon(glyph) + `<span>${label}</span>`, 'task-step', '', 'ghost', `data-step="${key}"`)).join('')}</nav>
         ${editorPanels(card)}
         <div class="error task-edit-error" role="alert"></div>
       </form>
-    </section>`, focus ? '#dialog-title' : null, { details, footer, origin });
+    </section>`, focus ? '#dialog-title' : null, { details, footer, origin, more });
   paintTrails(dialog);
 }
 
@@ -720,7 +715,8 @@ function setTaskSection(section, step = 'title') {
   }
   const editing = section === 'edit';
   dialog.querySelector('.inspector-edit-actions').hidden = !editing;
-  dialog.querySelector('.inspector-edit').hidden = editing;
+  const editButton = dialog.querySelector('.inspector-edit');
+  if (editButton) editButton.hidden = editing;
   if (editing) setEditorStep(step);
 }
 
@@ -728,9 +724,6 @@ function setEditorStep(step, focus = true) {
   const panel = dialog.querySelector(`[data-editor-step="${step}"]`);
   if (!panel) return;
   for (const item of dialog.querySelectorAll('[data-editor-step]')) item.hidden = item !== panel;
-  for (const control of dialog.querySelectorAll('.editor-steps button')) {
-    control.setAttribute('aria-pressed', String(control.dataset.step === step));
-  }
   const previous = dialog.dataset.editorStep;
   dialog.dataset.editorStep = step;
   if (previous !== step && panel.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -738,11 +731,14 @@ function setEditorStep(step, focus = true) {
       { duration: 170, easing: 'cubic-bezier(.16,1,.3,1)' });
   }
   const position = editorSteps.findIndex(([key]) => key === step);
+  dialog.querySelector('.wizard-count').textContent = `${position + 1} de ${editorSteps.length}`;
+  for (const dot of dialog.querySelectorAll('[data-dot]')) dot.dataset.on = String(dot.dataset.dot === step);
+  dialog.querySelector('[data-action=task-step-shift][data-offset="1"]').hidden = position === editorSteps.length - 1;
   dialog.querySelector('[data-action=task-step-shift][data-offset="-1"]').disabled = position === 0;
   dialog.querySelector('[data-action=task-step-shift][data-offset="1"]').disabled = position === editorSteps.length - 1;
   if (step === 'due' && !panel.querySelector('.calendar-day')) renderTaskCalendar(panel, today());
   if (focus) (panel.querySelector('input:not([type=hidden]), textarea, .calendar-day[aria-pressed=true]') ||
-    dialog.querySelector(`.editor-steps [data-step="${step}"]`))?.focus({ preventScroll: true });
+    panel.querySelector('.editor-step-title'))?.focus({ preventScroll: true });
 }
 
 /** Conversa como chat: mensagens e prints na ordem, juntando o que a mesma pessoa mandou em seguida. */
@@ -940,6 +936,15 @@ function viewPrint(cardId, index) {
   viewer.querySelector('[data-action=close-viewer]').focus();
 }
 
+// Esc fecha a ficha (ela não é modal, para o visualizador de prints poder ficar por cima).
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !dialog.open || document.querySelector('.viewer') || event.defaultPrevented) return;
+  const menu = dialog.querySelector('.menu[open]');
+  if (menu) { menu.open = false; return; }
+  if (dialog.dataset.editing === 'true') { dialog.querySelector('[data-action=task-cancel]')?.click(); return; }
+  dialog.close();
+});
+
 // No chat: Enter envia, Shift+Enter pula linha.
 document.addEventListener('keydown', (event) => {
   const box = event.target.closest?.('.composer textarea');
@@ -1080,6 +1085,7 @@ document.addEventListener('click', async (event) => {
       if (fromTask) showCard(cardById(card));
       else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
     } else if (action === 'copy-text' || action === 'copy-brief') {
+      control.closest('details')?.removeAttribute('open');
       const text = action === 'copy-brief' ? agentBrief(cardById(card)) : control.dataset.text;
       await navigator.clipboard.writeText(text).catch(() => { throw new Error('Não deu para copiar. Tente de novo.'); });
       message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
@@ -1241,10 +1247,6 @@ document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !dialog.open) {
     const input = document.querySelector('#search');
     if (input) { event.preventDefault(); input.focus(); }
-  }
-  if (event.key === 'Escape' && dialog.open && dialog.classList.contains('task-dialog')) {
-    dialog.close();
-    return;
   }
   if (event.key === 'Escape' && document.activeElement.closest('.menu[open]')) {
     const menu = document.activeElement.closest('.menu[open]');
