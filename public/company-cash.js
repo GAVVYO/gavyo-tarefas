@@ -64,13 +64,27 @@ export function setupCash({ request, escape, face, icon, message, onExpired, get
     return { entrou, saiu, saldo: entrou - saiu };
   }
 
+  /** Cédula de real desenhada em SVG (verde, com borda, R$ e o gavião no meio). */
+  const NOTE_SVG = `<svg viewBox="0 0 96 46" aria-hidden="true"><rect x="1" y="1" width="94" height="44" rx="4" fill="#6fbf8a" stroke="#2f6b45" stroke-width="2"/>
+    <rect x="6" y="6" width="84" height="34" rx="2" fill="none" stroke="#2f6b45" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <circle cx="48" cy="23" r="11" fill="#9fd9b0" stroke="#2f6b45" stroke-width="1.5"/><text x="48" y="27.5" text-anchor="middle" font-size="12" font-weight="800" fill="#1f4d31">$</text>
+    <text x="12" y="20" font-size="9" font-weight="800" fill="#1f4d31">R$</text><text x="84" y="36" text-anchor="end" font-size="9" font-weight="800" fill="#1f4d31">50</text></svg>`;
+  /** Mão de desenho (manga, punho e dedos fechados em pinça) apontando para baixo. */
+  const HAND_SVG = `<svg viewBox="0 0 70 150" aria-hidden="true">
+    <rect x="15" y="0" width="40" height="84" rx="8" fill="#38507a"/><rect x="13" y="72" width="44" height="14" rx="5" fill="#2b3e60"/>
+    <path d="M18 84 h34 c6 0 9 6 9 12 v14 c0 10 -8 18 -18 18 h-10 c-10 0 -18 -8 -18 -18 v-14 c0 -6 3 -12 9 -12z" fill="#f0c08a" stroke="#b9875a" stroke-width="1.5"/>
+    <path d="M26 124 c0 8 4 13 9 13 s9 -5 9 -13" fill="#f0c08a" stroke="#b9875a" stroke-width="1.5"/>
+    <path d="M24 100 h22 M24 109 h22" stroke="#d29f6c" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+
   function sceneHtml(saldo) {
-    const coins = saldo <= 0 ? 0 : Math.min(7, 2 + Math.floor(Math.log10(saldo / 100 + 1) * 1.6));
+    const notes = saldo <= 0 ? 0 : Math.min(6, 1 + Math.floor(Math.log10(saldo / 100 + 1) * 1.5));
     return `<div class="cash-scene" aria-hidden="true">
-      <img class="cash-hawk" src="/aguia-dourada.svg" alt="">
+      <span class="cash-perch"><img class="cash-hawk" src="/aguia-dourada.svg" alt="">
+        <span class="hawk-eyes"><i><b></b></i><i><b></b></i></span></span>
       <div class="cash-bucket">
         <span class="bucket-handle"></span>
-        <span class="bucket-coins">${Array.from({ length: coins }, (_, i) => '<i></i>').join('')}</span>
+        <span class="bucket-notes">${Array.from({ length: notes }, () => `<span class="bucket-note">${NOTE_SVG}</span>`).join('')}</span>
+        <span class="cash-hand"><span class="hand-arm">${HAND_SVG}</span><span class="hand-note">${NOTE_SVG}</span></span>
         <span class="bucket-body"><b>GAVYO</b></span>
       </div>
     </div>`;
@@ -133,9 +147,9 @@ export function setupCash({ request, escape, face, icon, message, onExpired, get
           : `<p class="cash-empty">${inMonth.length ? 'Nada com esse filtro neste mês.' : 'Nenhum lançamento neste mês. Use os botões acima quando entrar ou sair dinheiro.'}</p>`}
       </section>
     </div>`;
-    panel.querySelectorAll('.bucket-coins i').forEach((coin, i) => {
-      coin.style.setProperty('--cx', `${((i * 37) % 70) - 35}px`);
-      coin.style.setProperty('--cy', `${Math.floor(i / 3) * -9}px`);
+    panel.querySelectorAll('.bucket-note').forEach((note, i) => {
+      note.style.setProperty('--nx', `${(i % 2 ? 1 : -1) * (6 + (i * 9) % 22)}px`);
+      note.style.setProperty('--nr', `${(i % 2 ? 1 : -1) * (8 + (i * 13) % 20)}deg`);
     });
   }
 
@@ -196,7 +210,7 @@ export function setupCash({ request, escape, face, icon, message, onExpired, get
       items = created ? [...items, saved] : items.map((item) => (item.id === saved.id ? saved : item));
       form.close();
       month = saved.day.slice(0, 7);
-      if (created) await hawkMoves(saved.type);
+      if (created) await handMoves(saved.type);
       paint(true);
       message(created ? (saved.type === 'in' ? `${money.format(saved.amountCents / 100)} no balde.` : `${money.format(saved.amountCents / 100)} saiu do balde.`) : 'Lançamento salvo.');
     } catch (error) {
@@ -221,64 +235,60 @@ export function setupCash({ request, escape, face, icon, message, onExpired, get
     } catch (error) { fail(error.message, '[data-cash=delete]'); }
   }
 
-  /* ---------- O gavião e o balde ---------- */
-  /** Entrada: o gavião voa com a moeda e solta no balde. Saída: mergulha no balde e sai com uma moeda. */
-  function hawkMoves(type) {
+  /* ---------- A mão, a cédula e o gavião de olho ---------- */
+  /** O gavião olha para um ponto da tela (os olhos acompanham o dinheiro ou o mouse). */
+  function look(x, y) {
+    const eyes = panel?.querySelector('.hawk-eyes');
+    if (!eyes) return;
+    const box = eyes.getBoundingClientRect();
+    const dx = x - (box.left + box.width / 2);
+    const dy = y - (box.top + box.height / 2);
+    const size = Math.hypot(dx, dy) || 1;
+    eyes.style.setProperty('--lx', `${(dx / size) * 3.2}px`);
+    eyes.style.setProperty('--ly', `${(dy / size) * 3.2}px`);
+  }
+  document.addEventListener('pointermove', (event) => {
+    if (panel?.isConnected && !panel.querySelector('.cash-scene.is-busy')) look(event.clientX, event.clientY);
+  });
+
+  /**
+   * Entrada: a mão desce com a cédula, solta dentro do balde e sobe vazia.
+   * Saída: a mão desce vazia, pega uma cédula e sobe com ela.
+   * A mão e a cédula ficam atrás da frente do balde: entram nele, não atravessam.
+   */
+  function handMoves(type) {
     const scene = panel?.querySelector('.cash-scene');
-    const hawk = scene?.querySelector('.cash-hawk');
+    const hand = scene?.querySelector('.cash-hand');
+    const note = hand?.querySelector('.hand-note');
     const bucket = scene?.querySelector('.cash-bucket');
-    if (!scene || !hawk?.animate || calm()) return Promise.resolve();
+    if (!scene || !hand?.animate || calm()) return Promise.resolve();
     scene.classList.add('is-busy');
-    const coin = document.createElement('span');
-    coin.className = 'cash-coin';
-    coin.textContent = '$';
-    scene.append(coin);
-    const s = scene.getBoundingClientRect();
-    const h = hawk.getBoundingClientRect();
-    const b = bucket.getBoundingClientRect();
-    const dx = b.left + b.width / 2 - (h.left + h.width / 2);
-    const dy = b.top - (h.top + h.height);
-    const coinStart = { x: h.left - s.left + h.width / 2 - 14, y: h.top - s.top + h.height - 12 };
-    const coinEnd = { x: b.left - s.left + b.width / 2 - 14, y: b.top - s.top + 18 };
-    const wobble = () => bucket.animate([{ rotate: '0deg' }, { rotate: '-6deg' }, { rotate: '4deg' }, { rotate: '-2deg' }, { rotate: '0deg' }], { duration: 520, easing: 'ease-out' });
-    if (type === 'in') {
-      const fly = hawk.animate([
-        { transform: 'translate(0,0) rotate(0deg)' },
-        { transform: `translate(${dx * 0.5}px, ${-70}px) rotate(-8deg)`, offset: 0.35 },
-        { transform: `translate(${dx}px, ${dy - 30}px) rotate(4deg)`, offset: 0.6 },
-        { transform: `translate(${dx}px, ${dy - 40}px) rotate(0deg)`, offset: 0.75 },
-        { transform: 'translate(0,0) rotate(0deg)' }
-      ], { duration: 1700, easing: 'cubic-bezier(.45,.05,.35,1)' });
-      coin.animate([
-        { transform: `translate(${coinStart.x}px, ${coinStart.y}px)`, opacity: 1 },
-        { transform: `translate(${coinStart.x + dx * 0.5}px, ${coinStart.y - 70}px)`, offset: 0.35 },
-        { transform: `translate(${coinEnd.x}px, ${coinEnd.y - 50}px)`, offset: 0.62 },
-        { transform: `translate(${coinEnd.x}px, ${coinEnd.y + 30}px) scale(.8)`, opacity: 1, offset: 0.8 },
-        { transform: `translate(${coinEnd.x}px, ${coinEnd.y + 36}px) scale(.7)`, opacity: 0 }
-      ], { duration: 1700, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'forwards' });
-      setTimeout(wobble, 1340);
-      return fly.finished.then(done, done);
-    }
-    const dive = hawk.animate([
-      { transform: 'translate(0,0) rotate(0deg)' },
-      { transform: `translate(${dx}px, ${dy - 50}px) rotate(10deg)`, offset: 0.3 },
-      { transform: `translate(${dx}px, ${dy + 18}px) rotate(18deg)`, offset: 0.45 },
-      { transform: `translate(${dx * 1.5 + 120}px, ${-110}px) rotate(-12deg)`, opacity: 1, offset: 0.78 },
-      { transform: `translate(${dx * 1.5 + 160}px, ${-130}px) rotate(-12deg)`, opacity: 0, offset: 0.86 },
-      { transform: 'translate(0,0) rotate(0deg)', opacity: 0, offset: 0.9 },
-      { transform: 'translate(0,0) rotate(0deg)', opacity: 1 }
-    ], { duration: 2000, easing: 'cubic-bezier(.45,.05,.35,1)' });
-    coin.animate([
-      { transform: `translate(${coinEnd.x}px, ${coinEnd.y + 30}px) scale(.7)`, opacity: 0 },
-      { transform: `translate(${coinEnd.x}px, ${coinEnd.y + 30}px) scale(.7)`, opacity: 0, offset: 0.44 },
-      { transform: `translate(${coinEnd.x}px, ${coinEnd.y - 10}px) scale(.9)`, opacity: 1, offset: 0.5 },
-      { transform: `translate(${coinEnd.x + dx * 0.5 + 120}px, ${coinEnd.y - 150}px)`, opacity: 1, offset: 0.78 },
-      { transform: `translate(${coinEnd.x + dx * 0.5 + 160}px, ${coinEnd.y - 170}px)`, opacity: 0, offset: 0.86 },
-      { opacity: 0 }
-    ], { duration: 2000, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'forwards' });
-    setTimeout(wobble, 900);
-    return dive.finished.then(done, done);
-    function done() { coin.remove(); scene.classList.remove('is-busy'); }
+    scene.dataset.move = type;
+    const out = 'translateY(-300px)';
+    const over = 'translateY(-70px)';
+    const inside = 'translateY(6px)';
+    const timing = { duration: 2200, easing: 'cubic-bezier(.45,.05,.35,1)' };
+    // Os olhos seguem a mão quadro a quadro.
+    let watching = true;
+    const follow = () => {
+      if (!watching) return;
+      const box = (note.style.opacity === '0' ? hand : note).getBoundingClientRect();
+      look(box.left + box.width / 2, box.top + box.height / 2);
+      requestAnimationFrame(follow);
+    };
+    requestAnimationFrame(follow);
+    const wobble = () => bucket.animate([{ rotate: '0deg' }, { rotate: '-4deg' }, { rotate: '3deg' }, { rotate: '-1deg' }, { rotate: '0deg' }], { duration: 560, easing: 'ease-out' });
+    const handFrames = [
+      { transform: out, opacity: 1 }, { transform: over, offset: 0.3 }, { transform: inside, offset: 0.5 },
+      { transform: inside, offset: 0.58 }, { transform: over, offset: 0.76 }, { transform: out, opacity: 1 }
+    ];
+    const run = hand.animate(handFrames, { ...timing, fill: 'both' });
+    note.animate(type === 'in'
+      ? [{ opacity: 1 }, { opacity: 1, offset: 0.54 }, { opacity: 0, offset: 0.56 }, { opacity: 0 }]
+      : [{ opacity: 0 }, { opacity: 0, offset: 0.54 }, { opacity: 1, offset: 0.56 }, { opacity: 1 }], { ...timing, fill: 'both' });
+    setTimeout(wobble, 1150);
+    const done = () => { watching = false; hand.getAnimations().forEach((a) => a.cancel()); note.getAnimations().forEach((a) => a.cancel()); scene.classList.remove('is-busy'); delete scene.dataset.move; };
+    return run.finished.then(done, done);
   }
 
   /* ---------- Cliques ---------- */
