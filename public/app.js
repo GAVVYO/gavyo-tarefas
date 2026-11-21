@@ -523,7 +523,7 @@ function renderHub(content) {
   if (!panel.querySelector('.hub-activity')) {
     panel.innerHTML = `<div class="hub-activity">
       <section class="hub-tree" aria-labelledby="hub-tree-title">
-        <h2 id="hub-tree-title" class="sr-only">Linha do tempo do projeto</h2>
+        <h2 id="hub-tree-title" class="sr-only">Commits e PRs do GitHub</h2>
         <p class="hub-note" hidden></p>
         <div class="hub-tree-list" aria-busy="true"></div>
       </section>
@@ -682,7 +682,10 @@ function paintHub(panel) {
       const head = label !== day ? `<li class="tree-day"><h3>${escape(label)}</h3></li>` : '';
       day = label;
       return head + treeItem(item);
-    }).join('')}</ol>` : `<div class="hub-empty">${icon('git-commit-horizontal')}<p>Nada aconteceu neste projeto ainda. Commits, mudanças no contexto e nos cartões aparecem aqui.</p></div>`;
+    }).join('')}</ol>` : hubData.repository
+      ? `<div class="hub-empty">${icon('git-commit-horizontal')}<p>Nenhum commit em ${escape(hubData.repository)} ainda. Assim que alguém der push, aparece aqui.</p></div>`
+      : `<div class="hub-empty">${icon('git-branch')}<p>Ligue este projeto ao GitHub: informe o repositório no Contexto e os commits e PRs aparecem aqui.</p>
+        ${button('Informar repositório', 'hub-set-repo', 'pencil', 'ghost')}</div>`;
     list.removeAttribute('aria-busy');
   }
   const chatKey = hubData.messages.map((entry) => entry.id).join();
@@ -1764,6 +1767,10 @@ document.addEventListener('click', async (event) => {
       hubOpen = hubOpen === control.dataset.id ? null : control.dataset.id;
       paintHub(document.querySelector('#hub-panel'));
       document.querySelector(`.tree-row[data-id="${CSS.escape(control.dataset.id)}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'hub-set-repo') {
+      hubSector = 'contexto';
+      renderContents();
+      void editContext('repositorio');
     } else if (action === 'hub-reply') {
       setCite(control.dataset.id);
     } else if (action === 'hub-plus') {

@@ -196,7 +196,9 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     const [github, pushed] = await Promise.all([commits(ctx.repositorio, ctx.branch), store.githubEvents(ctx.repositorio, ctx.branch)]);
     const seen = new Set(pushed.map((item) => item.id));
     const merged = [...pushed, ...github.commits.map((item) => ({ kind: 'commit', id: `commit:${item.sha}`, ...item })).filter((item) => !seen.has(item.id))];
-    res.json({ items: await store.projectActivity(id, merged), note: pushed.length ? '' : github.note, version: ctx.version });
+    // A aba Atividade é só do GitHub: commits e PRs, do mais novo para o mais velho.
+    const items = merged.filter((item) => item.at).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+    res.json({ items, note: pushed.length ? '' : github.note, version: ctx.version, repository: ctx.repositorio || '' });
   });
   app.get('/api/projects/:id/messages', async (req, res) => res.json(await store.projectMessages(z.uuid().parse(req.params.id))));
   app.post('/api/projects/:id/messages', async (req, res) => res.json(await store.addProjectMessage(z.uuid().parse(req.params.id), req.body, req.actor)));
