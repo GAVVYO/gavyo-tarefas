@@ -148,6 +148,9 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     next();
   });
 
+  app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
+  app.post('/api/team/messages', async (req, res) => res.status(201).json(await store.addTeamMessage(req.body, req.actor)));
+
   app.post('/api/pin', async (req, res) => {
     const { currentPin, newPin } = z.object({ currentPin: pinInput, newPin: pinInput }).parse(req.body);
     if (currentPin === newPin) throw new AppError(400, 'Escolha um PIN diferente do atual.');

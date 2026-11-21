@@ -13,6 +13,38 @@
 }
 *{box-sizing:border-box}
 body{margin:0}
+/* GT-15: painel global no topo da pilha, sem reconstruir a tela inferior. */
+.team-chat-trigger.btn{position:fixed;inset:auto 18px 18px auto;margin:0;z-index:2147483000;background:var(--accent);color:var(--accent-text);border:1px solid var(--accent);box-shadow:var(--shadow);min-height:44px}
+.team-chat-trigger::backdrop{display:none}
+dialog.team-chat{position:fixed;inset:12px 12px 12px auto;margin:0;width:min(460px,calc(100vw - 24px));height:calc(100dvh - 24px);max-height:none;max-width:none;border-radius:var(--radius-panel);overflow:hidden}
+dialog.team-chat[open]{display:flex;flex-direction:column;animation:enter .18s var(--ease)}
+.team-chat .dialog-head{flex-shrink:0;gap:12px}
+.team-chat .dialog-head p{font-size:.93rem;margin-top:3px}
+.team-chat-feedback{padding:8px 14px 0;flex-shrink:0;min-height:28px;color:var(--muted)}
+.team-chat-error{padding:10px 14px;color:var(--red);flex-shrink:0;border-bottom:1px solid var(--line)}
+.team-chat-error .btn{margin-top:6px}
+.team-chat-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 14px;scrollbar-gutter:stable}
+.team-chat-messages{display:flex;flex-direction:column;gap:12px}
+.team-chat-message{border-left:2px solid var(--control-line);padding:10px 12px;background:var(--well);overflow-wrap:anywhere}
+.team-chat-message[data-own=true]{border-color:var(--accent)}
+.team-chat-message strong{display:block;font-weight:800}
+.team-chat-message time{display:block;font-size:.86rem;color:var(--muted);margin:2px 0 7px}
+.team-chat-message p{white-space:pre-wrap}
+.team-chat-empty{padding:24px 0}
+.team-chat-older{width:100%;margin-bottom:12px}
+.team-chat-form{display:grid;gap:8px;flex-shrink:0;border-top:1px solid var(--line);padding:12px 14px max(14px,env(safe-area-inset-bottom))}
+.team-chat-form label{font-weight:700}
+.team-chat-form textarea{resize:vertical;min-height:76px;max-height:22dvh;width:100%;background:var(--well);border:1px solid var(--control-line);border-radius:var(--radius-control);padding:10px;font-size:16px}
+.team-chat-form>div{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.team-chat-form small{font-size:.86rem}
+@media(max-width:640px){
+  dialog.team-chat{inset:var(--chat-top,0px) 0 auto;margin:0;width:100%;height:var(--chat-height,100dvh);border-radius:0;border:0}
+  .team-chat-trigger.btn{right:12px;bottom:max(12px,env(safe-area-inset-bottom))}
+  .team-chat .btn{min-height:44px}
+  .team-chat-form small{display:none}
+  .team-chat-form>div{justify-content:flex-end}
+}
+@media(prefers-reduced-motion:reduce){dialog.team-chat[open]{animation:none}}
 ::placeholder{color:var(--muted);opacity:1}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}

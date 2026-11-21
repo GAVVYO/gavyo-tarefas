@@ -1,6 +1,7 @@
 import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
+import { setupTeamChat } from './team-chat.js';
 
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
@@ -29,6 +30,7 @@ let restoreFocus;
 let boardTag;
 let boardRevision = 0;
 let pendingWrites = 0;
+const teamChat = setupTeamChat({ request, onExpired: endBoardSession });
 
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -82,7 +84,7 @@ function offline() {
   throw Object.assign(new Error('Sem conexão com a internet. Nada foi salvo; tente de novo quando voltar.'), { status: 0 });
 }
 
-async function request(path, method = 'GET', data) {
+async function request(path, method = 'GET', data, options = {}) {
   const writing = method !== 'GET';
   if (writing) {
     pendingWrites++;
@@ -90,7 +92,7 @@ async function request(path, method = 'GET', data) {
   }
   try {
     const response = await fetch('/api' + path, {
-      method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
+      ...options, method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
     }).catch(offline);
     const body = await response.json();
     if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
@@ -308,6 +310,7 @@ function updateProjectHeading() {
 }
 
 function renderShell() {
+  teamChat.setUser(board.user);
   const profileWasOpen = root.querySelector('.profile-dock')?.dataset.open === 'true';
   const profileAvatar = avatarFor(board.user.name);
   root.className = 'wrap';
@@ -2472,6 +2475,7 @@ let syncingBoard = false;
 let nextActivityRender = 0;
 
 function stopBoardSync() {
+  teamChat.setUser(null);
   clearTimeout(autoTimer);
   clearTimeout(presenceTimer);
   online = [];
@@ -2494,7 +2498,7 @@ function autoRefresh(delay = boardSyncDelay) {
 }
 
 function boardIsBusy() {
-  return pendingWrites || dragged || document.querySelector('.menu[open]') ||
+  return teamChat.isOpen || pendingWrites || dragged || document.querySelector('.menu[open]') ||
     document.documentElement.hasAttribute('data-card-transition');
 }
 
