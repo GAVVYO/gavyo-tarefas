@@ -3,6 +3,8 @@
  * Clicar numa nota (ou soltá-la na borda direita) abre a nota flutuando na lateral: dá para editar
  * e continuar usando o site. As notas abertas ficam só neste navegador.
  */
+import { setupAgenda } from './company-agenda.js';
+
 const COLORS = [['papel', 'Papel'], ['amarelo', 'Amarelo'], ['azul', 'Azul'], ['verde', 'Verde'], ['rosa', 'Rosa']];
 const NOTE_WIDTH = 260;
 const EDGE = 72;
@@ -16,6 +18,7 @@ export function setupCompany({ request, escape, face, icon, message, onExpired }
   let drag = null;
   let lastPaint = '';
   const opened = new Set(readOpened());
+  const agenda = setupAgenda({ request, escape, face, icon, message, onExpired });
   const dock = document.createElement('aside');
   dock.className = 'note-dock';
   dock.setAttribute('aria-label', 'Notas abertas');
@@ -47,7 +50,10 @@ export function setupCompany({ request, escape, face, icon, message, onExpired }
     content.innerHTML = `<section class="company">
       <header class="company-head">
         <h1>Empresa</h1>
-        <p class="muted">${tab === 'notas' ? '<span class="nav-long">Arraste as folhas pelo mural. Solte na borda direita da tela para levar a nota com você.</span><span class="nav-short">Toque numa folha para abrir e editar.</span>' : 'Ideias, datas e o caixa da GAVYO, num lugar só.'}</p>
+        <p class="muted">${{
+          notas: '<span class="nav-long">Arraste as folhas pelo mural. Solte na borda direita da tela para levar a nota com você.</span><span class="nav-short">Toque numa folha para abrir e editar.</span>',
+          agenda: '<span class="nav-long">Arraste um post-it para outro dia: o gavião prega lá. Clique num dia para marcar algo.</span><span class="nav-short">Toque num dia para ver e marcar compromissos.</span>'
+        }[tab] || 'Ideias, datas e o caixa da GAVYO, num lugar só.'}</p>
       </header>
       <div class="binder" data-tab="${tab}">
         <div class="binder-top">
@@ -62,6 +68,8 @@ export function setupCompany({ request, escape, face, icon, message, onExpired }
         <div class="company-panel" id="company-panel"></div>
       </div>
     </section>`;
+    agenda.stop();
+    if (tab === 'agenda') { await agenda.render(content.querySelector('#company-panel')); return; }
     if (tab !== 'notas') { paintSoon(); return; }
     if (!notes.length) await load();
     paintWall(true);
@@ -69,9 +77,8 @@ export function setupCompany({ request, escape, face, icon, message, onExpired }
   }
 
   function paintSoon() {
-    const label = tab === 'agenda' ? 'A agenda com post-its' : 'O caixa com o gavião e o balde';
-    host.querySelector('#company-panel').innerHTML = `<div class="company-soon">${icon(tab === 'agenda' ? 'calendar-days' : 'wallet')}
-      <h2>${label} chega na próxima parte.</h2><p class="muted">Por enquanto, as notas já estão funcionando.</p></div>`;
+    host.querySelector('#company-panel').innerHTML = `<div class="company-soon">${icon('wallet')}
+      <h2>O caixa com o gavião e o balde chega na próxima parte.</h2><p class="muted">As notas e a agenda já estão funcionando.</p></div>`;
   }
 
   function noteHtml(note) {
@@ -318,7 +325,7 @@ export function setupCompany({ request, escape, face, icon, message, onExpired }
   // As notas abertas continuam ali mesmo fora da tela Empresa.
   async function start() { if (opened.size) { await load(); paintDock(); } }
 
-  function stop() { clearTimeout(pollTimer); host = null; }
+  function stop() { clearTimeout(pollTimer); agenda.stop(); host = null; }
   function signOut() { stop(); notes = []; opened.clear(); saveOpened(); dock.replaceChildren(); }
 
   return { render, start, stop, signOut };

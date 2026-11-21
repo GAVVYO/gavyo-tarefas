@@ -2009,3 +2009,126 @@ html.note-to-edge::after{content:'Levar comigo';position:fixed;z-index:69;top:0;
   html[data-note-open] .team-chat-trigger{visibility:hidden}
 }
 @media(prefers-reduced-motion:reduce){.note,.note.is-dragging{transition:none}}
+
+/* ---------- Agenda: calendário de parede com post-its ---------- */
+.wall-calendar{position:relative;padding:26px 18px 18px;border:1px solid var(--line);border-radius:14px;background:var(--well)}
+.binder .wall-calendar{border-top-left-radius:4px}
+.calendar-rings{position:absolute;top:-9px;left:400px;right:28px;display:flex;justify-content:space-between;pointer-events:none}
+.calendar-rings i{width:10px;height:22px;border-radius:6px;background:linear-gradient(90deg,#5d5546,#c9bea7 45%,#6f6553);box-shadow:0 2px 3px #0008}
+.calendar-top{display:flex;align-items:center;gap:10px;margin:0 2px 14px;flex-wrap:wrap}
+.calendar-top>div{min-width:200px}
+.calendar-top h2{margin:0;font-size:1.5rem;letter-spacing:-.02em}
+.calendar-top p{margin:2px 0 0;color:var(--muted);font-size:.86rem}
+.calendar-turn{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink)}
+.calendar-turn:hover{border-color:var(--accent)}
+.calendar-turn .icon{width:18px;height:18px}
+.calendar-top>div{order:-1;margin-right:auto}
+.calendar-today{min-height:40px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);font-weight:700}
+.calendar-today:hover{border-color:var(--accent);color:var(--accent)}
+.postit-pad{position:relative;width:148px;height:46px;margin-left:6px;border:0;padding:0;background:none;cursor:pointer}
+.postit-pad-sheet,.postit-pad-top{position:absolute;inset:0;border-radius:2px}
+.postit-pad-sheet{translate:4px 4px;rotate:2deg;background:#e4cd6d;box-shadow:0 1px 2px #0005}
+.postit-pad-top{display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(160deg,#fff0a3,#f8df72);color:#3a3010;font-weight:800;font-size:.9rem;
+  white-space:nowrap;box-shadow:0 6px 14px -8px #000b;transform-origin:left bottom;transition:rotate .3s var(--ease),translate .3s var(--ease)}
+.postit-pad-top b{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#3a3010;color:#fff0a3;line-height:1}
+.postit-pad:hover .postit-pad-top,.postit-pad:focus-visible .postit-pad-top{rotate:-5deg;translate:0 -4px}
+.postit-pad:focus-visible{outline:none}.postit-pad:focus-visible .postit-pad-top{outline:3px solid var(--accent);outline-offset:3px}
+
+.calendar-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));padding:0 0 6px;color:var(--muted);font-size:.75rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.calendar-week span{padding-left:8px}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:6px;overflow:hidden}
+.calendar-day{position:relative;min-height:118px;padding:6px 6px 8px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--surface);transition:background .15s}
+.calendar-day[data-weekend=true]{background:color-mix(in srgb,var(--surface) 70%,var(--well))}
+.calendar-day[data-out=true]{background:var(--well)}
+.calendar-day[data-out=true] .day-number{opacity:.4}
+.calendar-day.is-target{background:var(--accent-soft);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--accent) 70%,transparent)}
+.day-number{display:grid;place-items:center;min-width:28px;height:28px;padding:0 6px;border:0;border-radius:999px;background:transparent;color:var(--ink-soft);font-weight:800;font-size:.86rem}
+.day-number:hover{background:var(--hover);color:var(--ink)}
+.calendar-day[data-today=true] .day-number{background:var(--accent);color:var(--accent-text)}
+.day-postits{display:grid;gap:8px;margin-top:4px}
+.day-more{justify-self:start;min-height:24px;padding:0 9px;border:1px dashed var(--control-line);border-radius:999px;background:transparent;color:var(--muted);font-size:.78rem;font-weight:800}
+.day-more:hover{color:var(--ink);border-color:var(--accent)}
+.day-dots{display:none}
+
+.postit{--postit:#fbe68f;position:relative;display:grid;grid-template-columns:1fr auto;align-items:end;gap:2px 6px;width:100%;min-height:44px;padding:9px 8px 7px;border:0;border-radius:1px 1px 2px 1px;
+  text-align:left;color:#2f2814;font-size:.78rem;line-height:1.25;cursor:grab;touch-action:none;rotate:var(--tilt,0deg);
+  background:linear-gradient(135deg,transparent calc(100% - 13px),#0000001f calc(100% - 13px),#ffffff70 calc(100% - 11px),transparent calc(100% - 10px)),
+    linear-gradient(170deg,color-mix(in srgb,var(--postit) 80%,#fff),var(--postit));
+  box-shadow:0 1px 1px #00000038,0 8px 14px -9px #000c;transition:rotate .25s var(--ease),scale .2s var(--ease),box-shadow .2s}
+.postit[data-color=rosa]{--postit:#f9c6d3}.postit[data-color=azul]{--postit:#c7dcf7}.postit[data-color=verde]{--postit:#cdebc0}.postit[data-color=papel]{--postit:#f2ead8}
+.postit:hover{scale:1.04;rotate:0deg;box-shadow:0 1px 1px #00000038,0 14px 20px -10px #000d}
+.postit:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.postit-pin{position:absolute;top:-6px;left:50%;width:12px;height:12px;translate:-50% 0;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#ff9a8a,#c62f2f 55%,#7c1414);box-shadow:0 2px 2px #0007}
+.postit-time{grid-column:1/-1;font-size:.7rem;font-weight:800;opacity:.7}
+.postit-title{font-weight:750;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.postit-face{width:18px;height:18px;border-radius:50%;flex:none;box-shadow:0 0 0 1.5px var(--postit)}
+.postit-face.avatar{display:grid;place-items:center;font-size:.55rem;background:#0000001a;color:#2f2814}
+/* Arrastando: o post-it pendura do dedo e balança. */
+.postit.is-dragging{z-index:20;cursor:grabbing;scale:1.1;transform-origin:50% 0;box-shadow:0 26px 34px -16px #000e;animation:postit-sway .45s ease-in-out infinite alternate;transition:scale .15s}
+.postit.is-dragging .postit-pin,.postit.is-landing .postit-pin{opacity:0}
+@keyframes postit-sway{from{rotate:calc(var(--sway,0deg) - 7deg)}to{rotate:calc(var(--sway,0deg) + 7deg)}}
+.postit.is-pinned .postit-pin{animation:pin-in .35s cubic-bezier(.3,1.6,.5,1)}
+@keyframes pin-in{from{scale:2.2;opacity:0}to{scale:1;opacity:1}}
+.agenda-hawk{position:fixed;z-index:95;top:0;left:0;width:132px;pointer-events:none;filter:drop-shadow(0 10px 12px #000a)}
+
+/* Formulário em etapas */
+.agenda-form{width:min(94vw,470px);padding:0;border:0;border-radius:18px;background:transparent;color:var(--ink);overflow:visible}
+.agenda-form::backdrop{background:#000a;backdrop-filter:blur(3px)}
+.agenda-form[open]{animation:enter .22s var(--ease)}
+.agenda-sheet{--postit:#fbe68f;display:grid;gap:16px;padding:20px 22px 18px;border:1px solid var(--line);border-top:6px solid var(--postit);border-radius:18px;background:var(--surface);box-shadow:var(--shadow)}
+.agenda-sheet[data-color=rosa]{--postit:#f9c6d3}.agenda-sheet[data-color=azul]{--postit:#c7dcf7}.agenda-sheet[data-color=verde]{--postit:#cdebc0}.agenda-sheet[data-color=papel]{--postit:#f2ead8}
+.agenda-form-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.agenda-form-head h2{margin:0;font-size:1.2rem}
+.agenda-x{display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:var(--ink)}
+.agenda-x:hover{background:var(--hover)}
+.agenda-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0;padding:0;list-style:none;counter-reset:step}
+.agenda-steps li{position:relative}
+.agenda-steps button{display:flex;align-items:center;gap:8px;width:100%;min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font-weight:700;font-size:.86rem}
+.agenda-steps button span{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--hover);font-size:.75rem}
+.agenda-steps [data-state=now] button{border-color:var(--accent);color:var(--ink)}
+.agenda-steps [data-state=now] span{background:var(--accent);color:var(--accent-text)}
+.agenda-steps [data-state=done] button{color:var(--ink-soft)}
+.agenda-steps [data-state=done] span{background:var(--green-soft);color:var(--green)}
+.agenda-steps button:disabled{opacity:.5;cursor:default}
+.agenda-step{display:grid;gap:14px}
+.agenda-step[hidden]{display:none}
+.agenda-field{display:grid;gap:6px}
+.agenda-field>span,.agenda-field-label{font-weight:750;font-size:.9rem;margin:0}
+.agenda-field small{color:var(--muted);font-weight:500}
+.agenda-field input,.agenda-field textarea{width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--control-line);border-radius:10px;background:var(--well);color:var(--ink);font-size:16px;color-scheme:dark}
+.agenda-field textarea{resize:vertical;line-height:1.45}
+.agenda-field input:focus-visible,.agenda-field textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+.agenda-colors{display:flex;gap:12px;flex-wrap:wrap}
+.agenda-color{width:44px;height:44px;border-radius:10px;border:2px solid #0000;rotate:-3deg;box-shadow:0 4px 8px -4px #000a}
+.agenda-color[data-color=amarelo]{background:#fbe68f}.agenda-color[data-color=rosa]{background:#f9c6d3}.agenda-color[data-color=azul]{background:#c7dcf7}.agenda-color[data-color=verde]{background:#cdebc0}.agenda-color[data-color=papel]{background:#f2ead8}
+.agenda-color[aria-checked=true]{border-color:var(--ink);rotate:0deg;scale:1.08}
+.agenda-color:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.agenda-preview{display:grid;place-items:center;padding:18px 0 6px}
+.postit.is-preview{width:170px;min-height:110px;align-content:start;font-size:.95rem;cursor:default;rotate:-2deg}
+.postit.is-preview .postit-pin{width:16px;height:16px;top:-8px}
+.agenda-error{margin:0;color:var(--red);font-weight:700}
+.agenda-form-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.agenda-nav{display:flex;gap:8px;margin-left:auto}
+.agenda-delete{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:var(--red);font-weight:700;font-size:.86rem}
+.agenda-delete .icon{width:16px;height:16px}
+.agenda-delete:hover,.agenda-delete[data-confirm=true]{background:var(--red-soft)}
+.agenda-day-list{display:grid;gap:14px;padding-top:6px}
+.postit.is-row{min-height:52px;font-size:.92rem;rotate:0deg;cursor:pointer;touch-action:auto}
+
+@media(max-width:710px){
+  .wall-calendar{padding:22px 8px 10px}.calendar-rings{display:none}
+  .calendar-top{gap:8px}.calendar-top>div{min-width:0;flex:1 1 100%}.calendar-top h2{font-size:1.25rem}
+  .postit-pad{width:128px;margin-left:auto}
+  .calendar-week span{padding-left:0;text-align:center}
+  .calendar-day{min-height:62px;padding:4px 2px;display:grid;justify-items:center;align-content:start;gap:4px;cursor:pointer}
+  .day-number{min-width:30px;height:30px;padding:0}
+  .day-postits{display:none}
+  .day-dots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}
+  .day-dots i{width:7px;height:7px;border-radius:2px;background:#fbe68f;rotate:-8deg}
+  .day-dots i[data-color=rosa]{background:#f9c6d3}.day-dots i[data-color=azul]{background:#c7dcf7}.day-dots i[data-color=verde]{background:#cdebc0}.day-dots i[data-color=papel]{background:#f2ead8}
+  .agenda-form{width:100%;max-width:none;margin:auto 0 0;border-radius:18px 18px 0 0}
+  .agenda-sheet{border-radius:18px 18px 0 0;padding-bottom:max(18px,env(safe-area-inset-bottom))}
+  .agenda-steps button{padding:0 6px;font-size:.8rem;gap:5px}
+}
+@media(prefers-reduced-motion:reduce){.postit.is-dragging{animation:none}.postit.is-pinned .postit-pin{animation:none}}
