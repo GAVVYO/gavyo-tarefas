@@ -930,7 +930,12 @@ function openEditPanel(prop) {
   // Nasce da altura da opção escolhida.
   const from = option.getBoundingClientRect();
   const to = stage.getBoundingClientRect();
-  panel.style.setProperty('--from-y', `${from.top + from.height / 2 - to.top}px`);
+  // O cartão fica na altura da opção (a linha dourada chega nele), sem passar do fim da tela.
+  const center = from.top + from.height / 2 - to.top;
+  const offset = document.documentElement.dataset.editing === 'side'
+    ? Math.max(0, Math.min(center - 26, innerHeight - to.top - panel.offsetHeight - 16)) : 0;
+  panel.style.marginTop = `${offset}px`;
+  panel.style.setProperty('--from-y', `${center - offset}px`);
   openPopover = panel;
   if (prop === 'due') renderTaskCalendar(panel.querySelector('.pop-calendar'), today());
   requestAnimationFrame(() => (panel.querySelector('input:not([type=file]):not([type=hidden]), textarea, [aria-pressed=true], .pop-option') || panel)?.focus({ preventScroll: true }));
@@ -1810,9 +1815,10 @@ function endBoardSession() {
   void login();
 }
 
+/** Em outra aba continua buscando, mais devagar, para os avisos do navegador chegarem. */
 function autoRefresh(delay = boardSyncDelay) {
   clearTimeout(autoTimer);
-  if (board && !document.hidden) autoTimer = setTimeout(syncBoard, delay);
+  if (board) autoTimer = setTimeout(syncBoard, document.hidden ? Math.max(delay, 20000) : delay);
 }
 
 function boardIsBusy() {
@@ -1821,14 +1827,14 @@ function boardIsBusy() {
 }
 
 async function syncBoard() {
-  if (!board || document.hidden || syncingBoard) return;
+  if (!board || syncingBoard) return;
   let delay = boardSyncDelay;
   syncingBoard = true;
   const revision = boardRevision;
   try {
     if (boardIsBusy()) return;
     const snapshot = await readBoard(boardTag, AbortSignal.timeout(10000));
-    if (!board || revision !== boardRevision || document.hidden || boardIsBusy()) return;
+    if (!board || revision !== boardRevision || boardIsBusy()) return;
     if (snapshot) {
       const { projects, preferences } = board;
       const before = board;
