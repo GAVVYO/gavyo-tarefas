@@ -24,6 +24,7 @@ const MAX_IMAGE = 8 * 1024 * 1024;
 const FIELD_LABELS = {
   title: 'Título', description: 'Descrição', comment: 'Comentário', text: 'Mensagem', name: 'Nome', pin: 'PIN',
   currentPin: 'PIN atual', newPin: 'PIN novo', url: 'Link', links: 'Links', due: 'Prazo', blocked: 'Motivo do bloqueio',
+  amountCents: 'Valor', paidOn: 'Data do pagamento', payerId: 'Quem pagou', participantIds: 'Participantes', frequency: 'Recorrência',
   checklist: 'Passos', resumo: 'O que é', objetivo: 'No que estamos agora', regras: 'Como trabalhamos', decisoes: 'Decisões',
   stack: 'Stack', producao: 'Produção', teste: 'Teste', repositorio: 'Repositório', branch: 'Branch', versaoLida: 'Versão lida'
 };
@@ -244,6 +245,13 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     for (const [id, item] of presence) if (now - item.at > 45000) presence.delete(id);
     res.json([...presence].map(([id, item]) => ({ id, ...item })));
   });
+
+  app.get('/api/projects/:id/finance', async (req, res) =>
+    res.json(await store.projectFinance(z.uuid().parse(req.params.id))));
+  app.post('/api/projects/:id/finance/expenses', async (req, res) =>
+    res.status(201).json(await store.addExpense(z.uuid().parse(req.params.id), req.body, req.actor)));
+  app.post('/api/projects/:id/finance/settlements', async (req, res) =>
+    res.status(201).json(await store.settleFinance(z.uuid().parse(req.params.id), req.body, req.actor)));
 
   app.get('/api/projects/:id/context', async (req, res) => res.json(await store.projectContext(z.uuid().parse(req.params.id))));
   app.put('/api/projects/:id/context', async (req, res) =>

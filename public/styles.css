@@ -39,7 +39,6 @@ dialog.team-chat[open]{display:flex;flex-direction:column;animation:enter .18s v
 .team-chat-form small{font-size:.86rem}
 @media(max-width:640px){
   dialog.team-chat{inset:var(--chat-top,0px) 0 auto;margin:0;width:100%;height:var(--chat-height,100dvh);border-radius:0;border:0}
-  .team-chat-trigger.btn{right:12px;bottom:max(12px,env(safe-area-inset-bottom))}
   .team-chat .btn{min-height:44px}
   .team-chat-form small{display:none}
   .team-chat-form>div{justify-content:flex-end}
@@ -345,6 +344,7 @@ form,.field,.detail-section{display:grid;gap:10px}
     transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);
     grid-template-columns:repeat(3,minmax(0,1fr));border-color:var(--line)
   }
+  .team-chat-trigger.btn{right:12px;bottom:calc(max(12px,env(safe-area-inset-bottom)) + 60px)}
   .workspace-nav .nav-btn{flex-direction:column;gap:3px;min-height:48px;padding:4px 10px;font-size:.786rem}
   .workspace-nav .nav-btn .icon{width:16px;height:16px}
   html:has(.wrap){scroll-padding-bottom:82px}
@@ -1780,3 +1780,61 @@ html[data-palette=cyberpunk] .card:hover{box-shadow:0 0 0 1px #ff2a6d55,0 14px 2
 .palette-swatch[data-palette=dourado] i:nth-child(1){background:#0f0d0b}.palette-swatch[data-palette=dourado] i:nth-child(2){background:#e9bf6e}.palette-swatch[data-palette=dourado] i:nth-child(3){background:#a6c48f}
 .palette-swatch[data-palette=tokyo] i:nth-child(1){background:#1a1b26}.palette-swatch[data-palette=tokyo] i:nth-child(2){background:#7aa2f7}.palette-swatch[data-palette=tokyo] i:nth-child(3){background:#bb9af7}
 .palette-swatch[data-palette=cyberpunk] i:nth-child(1){background:#0a0a12}.palette-swatch[data-palette=cyberpunk] i:nth-child(2){background:#fcee0a}.palette-swatch[data-palette=cyberpunk] i:nth-child(3){background:#ff2a6d}
+
+/* Financeiro da Central de projetos */
+.fin-view { width: min(100%, 1120px); margin-inline: auto; padding: 18px 0 28px; }
+.fin-heading, .fin-row, .fin-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fin-heading, .fin-row { justify-content: space-between; }
+.fin-heading { gap: 12px; margin-bottom: 16px; }
+.fin-heading h2 { font-size: clamp(1.4rem, 3vw, 1.85rem); }
+.btn.fin-btn { min-height: 34px; min-width: 0; border-radius: 0; padding-inline: 12px; }
+.fin-btn .icon { width: 15px; height: 15px; }
+.fin-status { color: var(--muted); margin-bottom: 10px; }
+.fin-status:empty { display: none; }
+.fin-body { display: grid; gap: 22px; }
+.fin-section { min-width: 0; }
+.fin-section h3 { margin-bottom: 8px; font-size: 1.05rem; }
+.fin-list, .fin-shares { list-style: none; margin: 0; padding: 0; }
+.fin-row, .fin-empty { padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); overflow-wrap: anywhere; }
+.fin-row + .fin-row { border-top: 0; }
+.fin-view small { display: block; color: var(--muted); }
+.fin-empty { color: var(--muted); }
+.fin-due { color: var(--amber); font-weight: 700; }
+.fin-due.is-late { color: var(--red); }
+.fin-table { table-layout: fixed; border-collapse: collapse; width: 100%; border: 1px solid var(--line); background: var(--surface); }
+.fin-table :is(th, td) { padding: 9px 12px; text-align: start; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.fin-table th { background: var(--well); color: var(--muted); font-size: .86rem; }
+.fin-table th:first-child { width: 33%; }
+.fin-table th:nth-child(3) { width: 13%; }
+.fin-table th:nth-child(4) { width: 15%; }
+.fin-table .fin-amount { text-align: end; font-variant-numeric: tabular-nums; }
+.fin-table summary { cursor: pointer; font-weight: 700; }
+.fin-shares { color: var(--muted); margin-top: 6px; font-size: .9rem; }
+.fin-mobile-label { display: none; }
+.fin-form input, .fin-form select { border-radius: 0; min-width: 0; }
+.fin-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fin-participants { min-width: 0; border: 1px solid var(--line); padding: 8px 12px; margin: 0; }
+.fin-participants legend { font-weight: 700; }
+.fin-participants p { color: var(--muted); margin-bottom: 4px; }
+.fin-participants label { display: flex; min-height: 34px; align-items: center; gap: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.fin-participants input { flex: none; }
+.fin-dialog-actions { justify-content: end; }
+.fin-form .error:empty { display: none; }
+
+@media (max-width: 640px) {
+  .fin-view { padding-top: 12px; }
+  .fin-table { display: block; }
+  .fin-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .fin-table tbody, .fin-table tr { display: block; }
+  .fin-table td, .fin-table td.fin-amount { display: block; border: 0; text-align: start; padding-block: 4px; }
+  .fin-table tr { padding-block: 6px; }
+  .fin-table tr + tr { border-top: 1px solid var(--line); }
+  .fin-mobile-label { display: inline-block; min-width: 78px; color: var(--muted); margin-inline-end: 4px; }
+  .fin-table small { padding-inline-start: 82px; }
+  .fin-fields { grid-template-columns: 1fr; }
+}
+
+@media (pointer: coarse) {
+  .btn.fin-btn, .fin-participants label { min-height: 44px; }
+  .fin-form :is(input:not([type=checkbox]), select) { min-height: 44px; font-size: 16px; }
+}

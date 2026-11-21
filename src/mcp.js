@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { AppError, newCard, newStep, patchCard, projectInput, stepPatch } from './store.js';
+import { expenseInput } from './finance.js';
 import { mergeGithubActivity, recentCommits } from './github.js';
 
 export async function serveMcp(req, res, store, actor) {
@@ -38,6 +39,10 @@ export async function serveMcp(req, res, store, actor) {
     { projectId: z.uuid(), text: z.string().min(1).max(4000),
       ref: z.object({ kind: z.enum(['commit', 'pr', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).optional() },
     false, ({ projectId, ...input }) => store.addProjectMessage(projectId, input, actor));
+  add('registrar_gasto', 'Registra um gasto pago. Use amountCents em centavos, paidOn em AAAA-MM-DD e IDs da equipe para quem pagou e participou. Divisão igual. Informe frequency para recorrência mensal/anual. Para pagar uma renovação, use o id e dueOn do resumo em occurrence. Repetir o mesmo operationId evita duplicar um gasto após falha de conexão.',
+    { projectId: z.uuid(), ...expenseInput.shape }, false, ({ projectId, ...expense }) => store.addExpense(projectId, expense, actor));
+  add('ver_resumo_financeiro', 'Lê gastos, acertos, saldos em centavos e próximos vencimentos de um projeto. Use listar_membros para os nomes dos participantes.',
+    { projectId: z.uuid() }, true, ({ projectId }) => store.projectFinance(projectId));
   add('listar_membros', 'Lista responsáveis disponíveis e seus IDs.', {}, true, store.members);
   add('listar_tarefas', 'Lista tarefas ativas. Use minhas=true para ver as atribuídas à pessoa conectada.',
     { projectId: z.uuid().optional(), minhas: z.boolean().optional(), blocked: z.boolean().optional(), archived: z.boolean().optional() },
