@@ -215,7 +215,7 @@ form,.field,.detail-section{display:grid;gap:10px}
   position:relative;border-radius:0;min-width:0;padding-inline:8px;color:var(--muted);
   box-shadow:none;font-size:.929rem
 }
-.inspector-nav .btn[aria-pressed=true]{
+.inspector-nav .btn[aria-expanded=true]{
   color:var(--accent-hover);background:var(--raised);border-color:transparent;
   box-shadow:inset 0 -2px var(--accent)
 }
@@ -676,7 +676,7 @@ html[data-task-dock] .top{grid-template-columns:minmax(0,1fr) auto;grid-template
 .inspector-actions .card-action{min-height:36px;padding-inline:16px;font-size:.929rem}
 .inspector-nav{padding:0 14px;background:transparent;border-top:1px solid var(--line);border-bottom:0;gap:2px}
 .inspector-nav .btn{border-radius:0;min-height:44px}
-.inspector-nav .btn[aria-pressed=true]{background:transparent;color:var(--accent-hover);box-shadow:inset 0 -2px var(--accent)}
+.inspector-nav .btn[aria-expanded=true]{background:transparent;color:var(--accent-hover);box-shadow:inset 0 -2px var(--accent)}
 .inspector-section{padding:16px 20px 20px;border-top:1px solid var(--line)}
 .inspector-description p{font-size:1rem;line-height:1.6;max-width:62ch}
 .task-edit-area.inspector-empty,.task-edit-area.inspector-link{color:var(--accent-hover);font-weight:700;padding:4px 8px;margin-left:-8px}
@@ -701,7 +701,7 @@ html[data-task-dock] .top{grid-template-columns:minmax(0,1fr) auto;grid-template
 .step-box .icon{width:13px;height:13px;opacity:0;filter:none;transition:opacity .15s}
 .step[aria-pressed=true] .step-box{background:var(--accent);border-color:var(--accent)}
 .step[aria-pressed=true] .step-box .icon{opacity:1}
-.step[aria-pressed=true]>span:last-child{color:var(--muted);text-decoration:line-through;text-decoration-color:#bdb2a255}
+.step[aria-pressed=true]>span:last-child:not(.step-has-details),.step[aria-pressed=true]>.step-title{color:var(--muted);text-decoration:line-through;text-decoration-color:#bdb2a255}
 .step:active .step-box{scale:.86}
 /* Conversa */
 .comment{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
@@ -1267,7 +1267,7 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .activity-head{border-top:1px solid #ffffff10;padding-top:6px}
 .activity-head .inspector-nav{padding:0;border:0;gap:4px}
 .activity-head .inspector-nav .btn{min-height:30px;padding:0 10px;border-radius:4px;font-size:.857rem;box-shadow:none}
-.activity-head .inspector-nav .btn[aria-pressed=true]{background:#ffffff0d;color:var(--ink)}
+.activity-head .inspector-nav .btn[aria-expanded=true]{background:#ffffff0d;color:var(--ink)}
 .ficha .thread{max-height:none;overflow:visible;padding:0}
 .ficha .history{margin:0}
 .task-footer{padding:10px 14px 14px;border-top:1px solid #ffffff10;background:#16130fcc}
@@ -1690,3 +1690,19 @@ button.chip-prop{cursor:pointer;font:inherit;font-size:.857rem;font-weight:600}
 .step-row:hover .step-edit,.step-row:focus-within .step-edit{opacity:1}
 .step-input{flex:1;min-width:0;min-height:30px;padding:4px 8px;border-radius:4px;background:var(--well);border:1px solid #e9bf6e66;color:var(--ink);font:inherit}
 @media(pointer:coarse){.step-row .step-edit{opacity:1}}
+
+/* Detalhes do passo: abrem embaixo da linha. */
+.step-row{flex-wrap:wrap}
+.step-has-details{display:inline-grid;margin-left:6px;vertical-align:-2px;opacity:.55}
+.step-has-details .icon{width:13px;height:13px}
+.step-row .step-more{opacity:.7}
+.step-row .step-more[aria-expanded=true] .icon{rotate:180deg}
+.step-details{flex-basis:100%;display:grid;gap:6px;margin:2px 0 8px 22px;padding:8px 10px;border-left:2px solid #e9bf6e40;background:var(--well);border-radius:0 6px 6px 0}
+.step-details[hidden]{display:none}
+.step-details textarea{width:100%;min-height:64px;resize:vertical;border:0;background:transparent;color:inherit;font:inherit;line-height:1.5;padding:2px 0}
+.step-pr{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.step-pr .icon{width:14px;height:14px;opacity:.6}
+.step-pr input{flex:1;min-height:30px;border:0;border-bottom:1px solid var(--line);background:transparent;color:inherit;padding:2px}
+
+/* Conversa recolhida: sem caixa de mensagem nem aviso, o rodapé some. */
+.task-dialog .task-footer:not(:has(.composer:not([hidden]),.task-feedback:not([hidden]))){display:none}
