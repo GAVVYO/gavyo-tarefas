@@ -1031,3 +1031,42 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
   .summary-main{grid-row:2}
   .wizard-dots{display:none}
 }
+
+/* ---------- Cartão com ordem fixa ---------- */
+.card{position:relative;display:grid;gap:6px;padding:11px 12px 12px;overflow:hidden}
+.card-head{display:flex;align-items:center;gap:8px;min-height:22px}
+.card .card-key{display:inline-flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:.72rem;font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+.card-urgent{display:inline-flex;align-items:center;gap:3px;color:var(--red);font-weight:700}
+.card-urgent .icon{width:11px;height:11px;filter:invert(.75) sepia(1) saturate(4) hue-rotate(-30deg)}
+.card .card-project{color:var(--accent);font-size:.72rem;font-weight:650;margin:0}
+.card .card-head details.menu{position:static;margin:0 0 0 auto}
+.card .card-head details.menu summary{width:24px;height:24px}
+.card .card-head .card-who{position:static;margin-left:2px}
+.card .card-head details.menu:not([open])~.card-who{margin-left:auto}
+.card .card-head details.menu~.card-who{margin-left:2px}
+.card h3{margin:0}
+.card .card-title{font-size:.9rem;font-weight:600;line-height:1.38;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card-foot{display:flex;align-items:center;gap:6px;min-height:24px;margin-top:2px}
+.card .card-signals{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.sig{
+  display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:var(--radius-pill);
+  border:1px solid #ffffff12;background:transparent;color:var(--muted);font-size:.72rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap
+}
+.sig .icon{width:12px;height:12px;opacity:.8}
+.sig[data-full=true]{color:var(--green);border-color:#a6c48f33}
+.sig-blocked{color:var(--amber);border-color:#f2c88c40;background:#f2c88c12;cursor:pointer}
+.sig-blocked:hover{background:#f2c88c22}
+.sig-blocked .icon{filter:invert(.85) sepia(.7) saturate(2.4) hue-rotate(-5deg);opacity:1}
+.card .card-footer{margin-left:auto}
+/* Trilha da águia: um fio no pé do cartão. */
+.card-rail{position:absolute;left:0;right:0;bottom:0;margin:0;display:block;height:3px}
+.card-rail .trail-line{height:2px;border-radius:0;background:#ffffff0a}
+.card-rail .trail-hawk{width:14px;top:-4px;left:calc(var(--p) * (100% - 16px));translate:0 0}
+.card[data-blocked=true]{border-color:#f2c88c26}
+.card[data-status=done] .card-title{color:var(--muted)}
+@media(hover:hover) and (pointer:fine){
+  .card .card-head details.menu{opacity:0}
+  .card:hover .card-head details.menu,.card:focus-within .card-head details.menu,.card .card-head details.menu[open]{opacity:1}
+}
+.card .card-head .card-key{flex:1;min-width:0}
+.card .card-head details.menu,.card .card-head details.menu~.card-who,.card .card-head details.menu:not([open])~.card-who{margin:0}

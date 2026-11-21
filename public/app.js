@@ -349,6 +349,11 @@ function agentBrief(card) {
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * Cartão com uma ordem só, igual em todos (de relance):
+ * 1) número + Urgente · rosto   2) título   3) sinais sempre na mesma ordem   4) trilha da águia no pé.
+ * Descrição e prints ficam na ficha.
+ */
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
   const due = dueLabel(card);
@@ -357,39 +362,37 @@ function cardTemplate(card) {
   const checks = card.checklist.filter((item) => item.done).length;
   const title = escape(card.title);
   const agent = lastAgent(card);
+  const live = agentLive(card);
+  const blocked = card.blocked && card.status !== 'done';
+  const prints = card.attachments?.length || 0;
   const actions = card.archived
     ? button('Restaurar', 'restore', 'archive-restore', 'ghost', `data-card="${card.id}"`)
     : Object.entries(stages).filter(([key]) => key !== card.status)
       .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
+  const signals = [
+    blocked ? `<button type="button" class="sig sig-blocked" data-action="view-block" data-card="${card.id}" title="${escape(card.blocked)}">${icon('octagon-pause')}Travado</button>` : '',
+    due ? `<span class="sig due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : '',
+    steps ? `<span class="sig" data-full="${checks === steps}" aria-label="${checks} de ${steps} passos feitos">${icon('list-checks')}${checks}/${steps}</span>` : '',
+    card.comments.length ? `<span class="sig" aria-label="${card.comments.length} mensagens">${icon('message-square')}${card.comments.length}</span>` : '',
+    prints ? `<span class="sig" aria-label="${prints} prints">${icon('image')}${prints}</span>` : '',
+    agent ? `<span class="sig card-agent" data-live="${live}" title="${live ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}${live ? `${agent} agora` : agent}</span>` : ''
+  ].join('');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
-    data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" data-live="${agentLive(card)}" ${card.archived ? '' : 'draggable="true"'}>
-    ${card.attachments?.length && card.status !== 'done' ? `<button type="button" class="card-cover" data-action="edit" data-card="${card.id}" tabindex="-1" aria-hidden="true">
-      <img src="${fileUrl(card, card.attachments.at(-1))}" alt="" loading="lazy" draggable="false">
-      ${card.attachments.length > 1 ? `<span class="cover-count">${icon('images')}${card.attachments.length}</span>` : ''}</button>` : ''}
-    ${card.blocked && card.status !== 'done' ? `<button type="button" class="card-block" data-action="view-block" data-card="${card.id}">
-      ${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
-    <div class="card-top">
-      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${card.key ? `<span class="card-key">${card.key}</span>` : ''}${urgent ? `<span class="urgent">Urgente</span> ` : ''}${title}</button></h3>
+    data-urgent="${urgent}" data-blocked="${Boolean(blocked)}" data-live="${live}" ${card.archived ? '' : 'draggable="true"'}>
+    <div class="card-head">
+      <span class="card-key">${card.key || ''}${urgent ? `<span class="card-urgent">${icon('flag')}Urgente</span>` : ''}</span>
+      ${view !== 'board' ? `<span class="card-project">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
-    </div>
-    ${card.description && card.status !== 'done' ? `<p class="card-desc">${escape(card.description.slice(0, 110))}${card.description.length > 110 ? '…' : ''}</p>` : ''}
-    ${view !== 'board' ? `<p class="card-project">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</p>` : ''}
-    <div class="card-bottom">
       <span class="card-who" title="${escape(assignee?.name || 'Sem responsável')}">
         ${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
         <span class="sr-only">${escape(assignee?.name || 'Sem responsável')}</span>
       </span>
-      <span class="card-signals">
-        ${agent ? `<span class="card-agent" data-live="${agentLive(card)}" title="${agentLive(card) ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}<span>${agentLive(card) ? `${agent} agora` : agent}</span></span>` : ''}
-        ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
-        ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')}${card.comments.length}</span>` : ''}
-        ${card.attachments?.length && card.status === 'done' ? `<span class="signal" aria-label="${card.attachments.length} prints">${icon('image')}${card.attachments.length}</span>` : ''}
-      </span>
-      <div class="card-footer">${nextCardAction(card)}</div>
     </div>
-    ${steps ? `<div class="trail" data-progress="${checks / steps}" data-full="${checks === steps}" role="img" aria-label="${checks} de ${steps} passos feitos">
-      <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${checks}/${steps}</span></div>` : ''}
+    <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button></h3>
+    ${signals || nextCardAction(card) ? `<div class="card-foot"><span class="card-signals">${signals}</span><div class="card-footer">${nextCardAction(card)}</div></div>` : ''}
+    ${steps ? `<div class="card-rail trail" data-progress="${checks / steps}" data-full="${checks === steps}" aria-hidden="true">
+      <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""></div>` : ''}
   </article>`;
 }
 
