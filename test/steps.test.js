@@ -103,7 +103,10 @@ test('Web e MCP operam pelo ID do passo e devolvem o cartão completo', async (t
     ['Web', 'Adicionou passo'], ['Codex', 'Adicionou passo'], ['Codex', 'Editou passo'],
     ['Web', 'Editou passo'], ['Codex', 'Removeu passo']
   ]);
-  assert.equal((await web('DELETE', `/${mcpStep}`, { version: removed.version })).status, 200);
+  const unchanged = await result('atualizar_passo', { id: card.id, passoId: mcpStep, done: true });
+  assert.equal(unchanged.version, removed.version);
+  assert.deepEqual(unchanged.history, removed.history);
+  assert.equal((await web('DELETE', `/${mcpStep}`, {})).status, 200);
   assert.deepEqual((await result('ver_tarefa', { id: card.id })).checklist, []);
   const checklist = Array.from({ length: 60 }, (_, i) => ({
     title: `Passo ${i + 1}`, details: 'a'.repeat(4000), done: false
