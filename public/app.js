@@ -353,7 +353,11 @@ function agentBrief(card) {
     `Etapa: ${stages[card.status]} · Responsável: ${assignee}${due ? ` · Prazo: ${due.text}` : ''}${card.priority === 'alta' ? ' · Urgente' : ''}`,
     card.blocked ? `Travado: ${card.blocked}` : '',
     card.description ? `\nO que precisa ser feito:\n${card.description}` : '',
-    card.checklist.length ? `\nPassos:\n${card.checklist.map((item) => `- [${item.done ? 'x' : ' '}] ${item.title}`).join('\n')}` : '',
+    card.checklist.length ? `\nPassos:\n${card.checklist.map((item) => [
+      `- [${item.done ? 'x' : ' '}] ${item.title}`,
+      item.details && item.details.split('\n').map((line) => `  ${line}`).join('\n'),
+      item.pr && `  PR: ${item.pr}`
+    ].filter(Boolean).join('\n')).join('\n')}` : '',
     card.attachments?.length ? `\nO cartão tem ${card.attachments.length} print(s) no GAVYO Tarefas.` : '',
     `\nAntes de começar, leia o contexto do projeto: MCP gavyo-tarefas, ferramenta ver_contexto_projeto com projectId ${card.projectId}.`,
     `Branch sugerida: ${branchName(card)}`,

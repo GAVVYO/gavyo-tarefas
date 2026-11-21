@@ -109,6 +109,10 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     await store.saveGithubEvent(kind, payload);
     res.json({ ok: true });
   });
+  // Atualizações da lista completa podem incluir até 60 passos com detalhes.
+  const checklistJson = express.json({ limit: '2mb' });
+  app.patch('/api/cards/:id', checklistJson);
+  app.post('/mcp', checklistJson);
   app.use(express.json({ limit: '64kb' }));
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -171,6 +175,23 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.patch('/api/cards/:id', async (req, res) => {
     const version = z.int().positive().parse(req.body.version);
     res.json(await store.updateCard(z.uuid().parse(req.params.id), req.body, req.actor, version));
+  });
+
+  app.post('/api/cards/:id/steps', async (req, res) => {
+    const version = z.int().positive().parse(req.body.version);
+    res.status(201).json(await store.addStep(z.uuid().parse(req.params.id), req.body, req.actor, version));
+  });
+  app.patch('/api/cards/:id/steps/:stepId', async (req, res) => {
+    const version = z.int().positive().parse(req.body.version);
+    const id = z.uuid().parse(req.params.id);
+    const stepId = z.uuid().parse(req.params.stepId);
+    res.json(await store.updateStep(id, stepId, req.body, req.actor, version));
+  });
+  app.delete('/api/cards/:id/steps/:stepId', async (req, res) => {
+    const version = z.int().positive().parse(req.body.version);
+    const id = z.uuid().parse(req.params.id);
+    const stepId = z.uuid().parse(req.params.stepId);
+    res.json(await store.removeStep(id, stepId, req.actor, version));
   });
 
   app.post('/api/cards/:id/attachments', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {

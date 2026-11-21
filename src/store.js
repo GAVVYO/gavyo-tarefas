@@ -26,10 +26,22 @@ export const newCard = z.object({
   assigneeId: cardFields.assigneeId.default(null), due: cardFields.due.default(null),
   priority: priority.default('normal')
 });
+const stepTitle = text(240);
+const stepDetails = z.string().max(4000);
+const stepPr = z.union([z.literal(''), z.url().max(2048).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.')]);
+export const newStep = z.object({ title: stepTitle, details: stepDetails.default(''), pr: stepPr.default('') });
+export const stepPatch = z.object({ title: stepTitle, details: stepDetails, pr: stepPr, done: z.boolean() }).partial();
+const checklistItem = stepPatch.extend({ id: z.uuid().optional() }).superRefine((item, context) => {
+  if (item.id) return;
+  if (item.title === undefined) context.addIssue({ code: 'custom', path: ['title'], message: 'Informe o título do novo passo.' });
+  if (item.done === undefined) context.addIssue({ code: 'custom', path: ['done'], message: 'Informe se o novo passo está concluído.' });
+});
+const MAX_STEPS = 60;
+
 export const patchCard = z.object(cardFields).partial().extend({
   status: status.optional(), blocked: z.string().trim().max(500).optional(),
   archived: z.boolean().optional(),
-  checklist: z.array(z.object({ title: text(240), done: z.boolean() })).max(60).optional(),
+  checklist: z.array(checklistItem).max(MAX_STEPS).optional(),
   comment: text(2000).optional()
 });
 export const DEFAULT_PIN = '1234';
@@ -177,6 +189,7 @@ export function createStore({ query }) {
       next.set(card.projectId, number);
       card.number = number;
       card.key = `${projectKey(projectsById.get(card.projectId)?.name || 'GT')}-${number}`;
+      normalizeChecklist(card);
       await query('UPDATE cards SET document = ? WHERE id = ? AND version = ?', [JSON.stringify(card), row.id, row.version]);
     }
   }
@@ -199,7 +212,38 @@ export function createStore({ query }) {
     return { ...card, version: 1 };
   }
 
-  const decode = (row) => ({ ...JSON.parse(row.document), version: row.version });
+  const decode = (row) => ({ ...normalizeChecklist(JSON.parse(row.document)), version: row.version });
+
+  function stepFields({ id, title, done, details = '', pr = '' }) {
+    return { id, title, done, details, pr };
+  }
+
+  function normalizeChecklist(card) {
+    card.checklist = (card.checklist ?? []).map((step, index) =>
+      stepFields({ ...step, id: step.id ?? legacyStepId(card.id, index) }));
+    return card;
+  }
+
+  function legacyStepId(cardId, index) {
+    // A leitura e qualquer instância do servidor calculam o mesmo UUID antes da primeira gravação.
+    const hex = createHash('sha256').update(`gavyo-step:${cardId}:${index}`).digest('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  }
+
+  function replaceChecklist(current, incoming) {
+    const previous = new Map(current.map((step) => [step.id, step]));
+    const ids = new Set();
+    return incoming.map(({ id = randomUUID(), ...patch }) => {
+      if (ids.has(id)) throw new AppError(400, 'Os passos precisam ter IDs diferentes.');
+      ids.add(id);
+      const saved = previous.get(id);
+      const step = stepFields({ id, ...saved, ...patch });
+      if (step.title === undefined || step.done === undefined) {
+        throw new AppError(400, 'Informe o título e a conclusão dos passos novos.');
+      }
+      return step;
+    });
+  }
 
   const cardVersions = () => query('SELECT id, version FROM cards ORDER BY id');
 
@@ -228,16 +272,18 @@ export function createStore({ query }) {
   }
 
   async function updateCard(id, input, actor, expectedVersion) {
-    const { comment, ...patch } = patchCard.parse(input);
+    const { comment, checklist, ...patch } = patchCard.parse(input);
     await validateAssignee(patch.assigneeId);
     for (let attempt = 0; attempt < 3; attempt++) {
       const row = await first('SELECT version, document FROM cards WHERE id = ?', [id]);
       if (!row) throw new AppError(404, 'Cartão não encontrado.');
       const { version, ...current } = decode(row);
       // Comentário só acrescenta, nunca sobrescreve: entra mesmo se o cartão mudou desde que a pessoa abriu.
-      const onlyComment = comment && !Object.keys(patch).length;
+      const onlyComment = comment && checklist === undefined && !Object.keys(patch).length;
       if (expectedVersion != null && version !== expectedVersion && !onlyComment) break;
-      const changes = Object.entries(patch).filter(([key, value]) =>
+      const fields = { ...patch };
+      if (checklist !== undefined) fields.checklist = replaceChecklist(current.checklist, checklist);
+      const changes = Object.entries(fields).filter(([key, value]) =>
         JSON.stringify(value) !== JSON.stringify(current[key]));
       if (!changes.length && !comment) return { ...current, version };
       const updated = { ...current, ...Object.fromEntries(changes) };
@@ -262,12 +308,13 @@ export function createStore({ query }) {
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
   }
 
-  /** Muda o cartão sem pedir versão (anexos): tenta de novo se outra pessoa salvou junto. */
-  async function changeCard(id, change, actor, action) {
+  /** Aplica uma edição pontual ao cartão e relê se outra pessoa gravar primeiro. */
+  async function changeCard(id, change, actor, action, expectedVersion) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const row = await first('SELECT version, document FROM cards WHERE id = ?', [id]);
       if (!row) throw new AppError(404, 'Cartão não encontrado.');
       const { version, ...card } = decode(row);
+      if (expectedVersion != null && version !== expectedVersion) break;
       card.attachments ??= [];
       const result = change(card);
       card.history.push(event(actor, action));
@@ -276,6 +323,37 @@ export function createStore({ query }) {
       if (saved.affectedRows === 1) return { card: { ...card, version: version + 1 }, result };
     }
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
+  }
+
+  async function addStep(id, input, actor, version) {
+    const step = stepFields({ id: randomUUID(), ...newStep.parse(input), done: false });
+    const { card } = await changeCard(id, (current) => {
+      if (current.checklist.length >= MAX_STEPS) throw new AppError(400, 'O cartão aceita até 60 passos.');
+      current.checklist.push(step);
+    }, actor, 'Adicionou passo', version);
+    return card;
+  }
+
+  function stepIndex(card, stepId) {
+    const index = card.checklist.findIndex((step) => step.id === stepId);
+    if (index < 0) throw new AppError(404, 'Passo não encontrado.');
+    return index;
+  }
+
+  async function updateStep(id, stepId, input, actor, version) {
+    const patch = stepPatch.parse(input);
+    const { card } = await changeCard(id, (current) => {
+      const index = stepIndex(current, stepId);
+      Object.assign(current.checklist[index], patch);
+    }, actor, 'Editou passo', version);
+    return card;
+  }
+
+  async function removeStep(id, stepId, actor, version) {
+    const { card } = await changeCard(id, (current) => {
+      current.checklist.splice(stepIndex(current, stepId), 1);
+    }, actor, 'Removeu passo', version);
+    return card;
   }
 
   /** Print ou imagem do cartão: o arquivo fica no disco, o cartão guarda só o registro. */
@@ -495,5 +573,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }

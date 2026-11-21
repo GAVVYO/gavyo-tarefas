@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { AppError, newCard, patchCard, projectInput } from './store.js';
+import { AppError, newCard, newStep, patchCard, projectInput, stepPatch } from './store.js';
 import { recentCommits } from './github.js';
 
 export async function serveMcp(req, res, store, actor) {
@@ -47,8 +47,17 @@ export async function serveMcp(req, res, store, actor) {
     });
   add('criar_tarefa', 'Cria tarefa numa coluna A fazer. Use IDs de projeto e responsável obtidos pelas ferramentas de listagem.',
     newCard.shape, false, (input) => store.createCard(input, actor));
-  add('atualizar_tarefa', 'Muda qualquer coisa de uma tarefa: título, descrição, responsável, prazo (AAAA-MM-DD), prioridade (alta/normal/baixa), etapa (todo, doing, done), travado (motivo; vazio destrava), passos (lista completa), arquivar (só concluídas) e comentário. Mande só o que muda.',
-    { id: z.uuid(), ...patchCard.shape }, false, ({ id, ...patch }) => store.updateCard(id, patch, actor));
+  const cardVersion = z.int().positive().optional();
+  add('atualizar_tarefa', 'Muda qualquer coisa de uma tarefa: título, descrição, responsável, prazo (AAAA-MM-DD), prioridade (alta/normal/baixa), etapa (todo, doing, done), travado (motivo; vazio destrava), passos (lista completa), arquivar (só concluídas) e comentário. Mande só o que muda. Passe version para recusar a mudança se o cartão já mudou.',
+    { id: z.uuid(), version: cardVersion, ...patchCard.shape }, false, ({ id, version, ...patch }) => store.updateCard(id, patch, actor, version));
+  add('adicionar_passo', 'Adiciona um passo à tarefa. Devolve o cartão atualizado, com o ID do novo passo.',
+    { id: z.uuid(), version: cardVersion, ...newStep.shape }, false, ({ id, version, ...step }) => store.addStep(id, step, actor, version));
+  add('atualizar_passo', 'Edita um passo pelo ID. Mande só os campos que mudam. Passe version para recusar a edição se o cartão já mudou.',
+    { id: z.uuid(), passoId: z.uuid(), version: cardVersion, ...stepPatch.shape }, false,
+    ({ id, passoId, version, ...patch }) => store.updateStep(id, passoId, patch, actor, version));
+  add('remover_passo', 'Remove um passo pelo ID. Passe version para recusar a remoção se o cartão já mudou.',
+    { id: z.uuid(), passoId: z.uuid(), version: cardVersion }, false,
+    ({ id, passoId, version }) => store.removeStep(id, passoId, actor, version));
   add('ver_tarefa', 'Tudo de uma tarefa: descrição, passos, conversa, prints e histórico com autor e canal.',
     { id: z.uuid() }, true, async ({ id }) => {
       const card = (await store.listCards({})).concat(await store.listCards({ archived: true })).find((item) => item.id === id);
