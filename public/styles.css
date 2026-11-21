@@ -1306,3 +1306,65 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .task-dialog .task-footer:has(.composer){display:block}
 .ficha:focus{outline:0}
 .task-dialog .composer[hidden]{display:none}
+
+/* ---------- Modo editar: ficha para a esquerda, opções em cascata, cartão que explode ---------- */
+.task-dialog{transition:translate .45s cubic-bezier(.2,.9,.25,1),width .45s cubic-bezier(.2,.9,.25,1)}
+html[data-editing=side] .task-dialog{width:640px;translate:calc(-50% - 248px) 0}
+.edit-trigger{min-height:32px;padding:0 12px;border-radius:9px;border-color:#ffffff1a;background:#ffffff08;font-size:.82rem}
+.edit-trigger[aria-expanded=true]{border-color:var(--accent);color:var(--accent-hover);background:#e9bf6e14}
+.edit-trigger .icon{width:14px;height:14px}
+.editor-side{
+  position:fixed;z-index:7;top:max(16px,7vh);left:calc(50% + 88px);width:480px;max-height:calc(100dvh - 32px - 7vh);
+  display:grid;grid-template-columns:176px minmax(0,1fr);gap:14px;align-items:start;pointer-events:none
+}
+.editor-side.is-open,.editor-side.is-open *{pointer-events:auto}
+.editor-options{display:grid;gap:6px}
+.editor-option,.editor-done{
+  display:flex;align-items:center;gap:10px;min-height:42px;padding:0 14px;border:1px solid #ffffff17;border-radius:12px;
+  background:#1c1915e0;backdrop-filter:blur(14px);color:var(--ink);font-weight:650;font-size:.88rem;text-align:left;
+  opacity:0;translate:-24px -8px;scale:.96;box-shadow:0 14px 30px -18px #000;
+  transition:opacity .28s,translate .42s cubic-bezier(.2,1.3,.4,1),scale .42s cubic-bezier(.2,1.3,.4,1),background .15s,border-color .15s;
+  transition-delay:calc(var(--i,0) * 45ms)
+}
+.editor-side.is-open .editor-option,.editor-side.is-open .editor-done{opacity:1;translate:0 0;scale:1}
+.editor-side.is-leaving .editor-option,.editor-side.is-leaving .editor-done{transition-delay:calc((9 - var(--i,0)) * 18ms);transition-duration:.18s}
+.editor-option .icon{width:16px;height:16px;opacity:.75}
+.editor-option:hover{background:#2a241bf0;border-color:#ffffff2a}
+.editor-option[aria-current=true]{border-color:var(--accent);background:#3a2c17f0;color:var(--accent-hover)}
+.editor-option[aria-current=true] .icon{filter:invert(.8) sepia(.6) saturate(3) hue-rotate(5deg);opacity:1}
+.editor-done{justify-content:center;margin-top:4px;background:var(--accent);color:var(--accent-text);border-color:transparent}
+.editor-done .icon{filter:none;width:15px;height:15px}
+.editor-stage{position:relative;min-height:1px}
+.edit-panel{
+  --from-y:40px;padding:14px;border-radius:16px;background:#231f19f0;backdrop-filter:blur(18px);border:1px solid #e9bf6e40;
+  box-shadow:0 30px 60px -20px #000,0 0 0 1px #0006;transform-origin:0 var(--from-y);animation:panel-burst .5s cubic-bezier(.2,1.35,.35,1) both
+}
+.edit-panel.is-leaving{animation:panel-out .2s ease-in both}
+@keyframes panel-burst{0%{opacity:0;scale:.2;filter:blur(6px)}55%{opacity:1;filter:blur(0)}100%{scale:1}}
+@keyframes panel-out{to{opacity:0;scale:.9}}
+.edit-panel-title{margin:0 0 10px;font-size:.78rem;font-weight:750;color:var(--muted);letter-spacing:.02em}
+.edit-input{width:100%;border-radius:10px;background:#ffffff08;border-color:#ffffff1a;font-size:.95rem}
+textarea.edit-input{line-height:1.55}
+.edit-hint{margin:6px 0 0;color:var(--muted);font-size:.74rem}
+.edit-steps{display:grid;gap:4px;margin:0 0 8px;padding:0;list-style:none;font-size:.86rem}
+.edit-steps li{display:flex;align-items:center;gap:8px}
+.edit-steps .icon{width:14px;height:14px;opacity:.7}
+.edit-drop{display:grid;place-items:center;gap:8px;padding:22px 12px;border:1.5px dashed var(--control-line);border-radius:12px;text-align:center;color:var(--muted);font-size:.82rem;cursor:pointer}
+.edit-drop:hover{border-color:var(--accent);background:#e9bf6e0f;color:var(--ink)}
+.edit-drop b{color:var(--ink)}
+.edit-drop .icon{width:22px;height:22px}
+.chip-prop{cursor:default}
+.chip-prop.just-set,.title-input.just-set,.desc-input.just-set,.ficha-steps.just-set{animation:land-value .8s cubic-bezier(.2,1.3,.4,1)}
+@keyframes land-value{0%{box-shadow:0 0 0 0 #e9bf6e00;scale:1}25%{box-shadow:0 0 0 4px #e9bf6e55;scale:1.06}100%{box-shadow:0 0 0 0 #e9bf6e00;scale:1}}
+/* Celular e telas estreitas: as opções sobem de baixo e o cartão abre por cima. */
+html[data-editing=sheet] .editor-side{
+  top:auto;bottom:0;left:0;right:0;width:auto;max-height:none;grid-template-columns:1fr;gap:8px;
+  padding:10px 12px max(12px,env(safe-area-inset-bottom));background:#14110ef2;backdrop-filter:blur(16px);border-top:1px solid #ffffff17;border-radius:18px 18px 0 0;z-index:9
+}
+html[data-editing=sheet] .editor-options{grid-auto-flow:column;grid-auto-columns:max-content;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+html[data-editing=sheet] .editor-option,html[data-editing=sheet] .editor-done{translate:0 16px;min-height:40px;margin:0}
+html[data-editing=sheet] .editor-stage{order:-1}
+html[data-editing=sheet] .edit-panel{transform-origin:50% 100%;max-height:52dvh;overflow:auto}
+@media(prefers-reduced-motion:reduce){.editor-option,.editor-done,.edit-panel,.task-dialog{transition:none;animation:none}}
+.pop-calendar .calendar-day[aria-current=date]{color:var(--accent-hover);font-weight:800;box-shadow:inset 0 0 0 1px #e9bf6e80}
+.pop-calendar .calendar-day[aria-pressed=true]{background:var(--accent);color:var(--accent-text)}

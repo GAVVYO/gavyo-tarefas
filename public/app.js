@@ -9,7 +9,7 @@ const notice = document.querySelector('#notice');
 const scrim = Object.assign(document.createElement('div'), { className: 'task-scrim', hidden: true });
 document.body.append(scrim);
 scrim.addEventListener('click', () => dialog.close());
-dialog.addEventListener('close', () => { scrim.hidden = true; void sendPresence(); });
+dialog.addEventListener('close', () => { scrim.hidden = true; closeEditor(); void sendPresence(); });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
@@ -687,8 +687,7 @@ function propChip(card, prop) {
     blocked: card.blocked ? `${icon('octagon-pause')}<span class="blocked-text">Travado</span>` : `${icon('octagon-pause')}<span class="muted">Travar</span>`
   }[prop];
   const labels = { status: 'Etapa', assignee: 'Quem faz', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
-  return `<button type="button" class="chip-prop" data-action="prop" data-prop="${prop}" data-card="${card.id}"
-    aria-haspopup="dialog" aria-label="${labels[prop]}: mudar" ${card.archived ? 'disabled' : ''}>${content}</button>`;
+  return `<span class="chip-prop" data-prop="${prop}" title="${labels[prop]}">${content}</span>`;
 }
 
 function showCard(card, origin, focus = true) {
@@ -699,7 +698,8 @@ function showCard(card, origin, focus = true) {
   const prints = card.attachments || [];
   const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
     ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>`;
-  const more = `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
+  const editTrigger = card.archived ? '' : `<button type="button" class="btn edit-trigger" data-action="edit-mode" data-card="${card.id}" aria-expanded="false">${icon('pencil')}Editar</button>`;
+  const more = editTrigger + `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
       ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
       ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
       ${button('Entregar para o assistente', 'copy-brief', 'bot', 'ghost', `data-card="${card.id}"`)}
@@ -725,7 +725,7 @@ function showCard(card, origin, focus = true) {
       ${FIELD_PROPS.map((prop) => propChip(card, prop)).join('')}
       <span class="props-next">${nextCardAction(card)}</span>
     </div>
-    ${card.blocked ? `<button type="button" class="ficha-block" data-action="prop" data-prop="blocked" data-card="${card.id}">${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
+    ${card.blocked ? `<button type="button" class="ficha-block" data-action="edit-opt" data-prop="blocked" data-card="${card.id}">${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
     <textarea class="desc-input" data-field="description" data-card="${card.id}" rows="2" maxlength="8000" aria-label="Descrição"
       placeholder="Adicionar descrição…" ${card.archived ? 'readonly' : ''}>${escape(card.description)}</textarea>
     <section class="ficha-steps" aria-label="Passos">
@@ -791,7 +791,12 @@ function rerenderCard(card) {
 
 /* ---------- Menus dos campos (popovers) ---------- */
 function closePopover() {
-  openPopover?.remove();
+  if (openPopover?.classList.contains('edit-panel')) {
+    const panel = openPopover;
+    panel.classList.add('is-leaving');
+    setTimeout(() => panel.remove(), 200);
+    editor?.querySelectorAll('.editor-option').forEach((item) => item.setAttribute('aria-current', 'false'));
+  } else openPopover?.remove();
   openPopover = null;
 }
 
@@ -842,14 +847,113 @@ function showPopover(trigger) {
   (pop.querySelector('[aria-pressed=true]') || pop.querySelector('textarea, button'))?.focus({ preventScroll: true });
 }
 
+/* ---------- Modo editar: a ficha vai para a esquerda, as opções descem em cascata à direita ---------- */
+const EDIT_OPTIONS = [
+  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Quem faz', 'user-round'],
+  ['due', 'Prazo', 'calendar-days'], ['priority', 'Prioridade', 'flag'], ['status', 'Etapa', 'circle-dashed'],
+  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Imagem', 'image-plus']
+];
+let editor = null;
+let editorCloseTimer;
+
+function openEditor(cardId, { pin = false, prop } = {}) {
+  clearTimeout(editorCloseTimer);
+  if (editor) {
+    if (pin) editor.dataset.mode = 'pin';
+    if (prop) openEditPanel(prop);
+    return;
+  }
+  const narrow = innerWidth < 1180;
+  editor = document.createElement('aside');
+  editor.className = 'editor-side';
+  editor.dataset.card = cardId;
+  editor.dataset.mode = pin ? 'pin' : 'peek';
+  editor.setAttribute('aria-label', 'Editar cartão');
+  editor.innerHTML = `<div class="editor-options" role="menu">${EDIT_OPTIONS.map(([key, label, glyph]) => `<button type="button" role="menuitem"
+      class="editor-option" data-action="edit-opt" data-prop="${key}" data-card="${cardId}">${icon(glyph)}<span>${label}</span></button>`).join('')}
+    <button type="button" class="editor-done" data-action="edit-close">${icon('check')}Pronto</button></div>
+    <div class="editor-stage" aria-live="polite"></div>`;
+  document.body.append(editor);
+  editor.querySelectorAll('.editor-option, .editor-done').forEach((item, index) => item.style.setProperty('--i', index));
+  document.documentElement.dataset.editing = narrow ? 'sheet' : 'side';
+  dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'true');
+  editor.addEventListener('mouseenter', () => clearTimeout(editorCloseTimer));
+  editor.addEventListener('mouseleave', () => scheduleEditorClose());
+  requestAnimationFrame(() => editor?.classList.add('is-open'));
+  if (prop) openEditPanel(prop);
+}
+
+function scheduleEditorClose() {
+  if (!editor || editor.dataset.mode === 'pin') return;
+  editorCloseTimer = setTimeout(closeEditor, 260);
+}
+
+function closeEditor() {
+  clearTimeout(editorCloseTimer);
+  if (!editor) return;
+  const leaving = editor;
+  editor = null;
+  closePopover();
+  delete document.documentElement.dataset.editing;
+  dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'false');
+  leaving.classList.remove('is-open');
+  leaving.classList.add('is-leaving');
+  setTimeout(() => leaving.remove(), 320);
+}
+
+/** O cartão da opção "explode" no palco da direita, nascendo da própria opção. */
+function openEditPanel(prop) {
+  if (!editor) return;
+  editor.dataset.mode = 'pin';
+  const card = cardById(editor.dataset.card);
+  const option = editor.querySelector(`.editor-option[data-prop="${prop}"]`);
+  for (const item of editor.querySelectorAll('.editor-option')) item.setAttribute('aria-current', String(item === option));
+  closePopover();
+  const stage = editor.querySelector('.editor-stage');
+  const panel = document.createElement('div');
+  panel.className = 'edit-panel';
+  panel.dataset.prop = prop;
+  panel.dataset.card = card.id;
+  const label = EDIT_OPTIONS.find(([key]) => key === prop)[1];
+  let body;
+  if (prop === 'title') body = `<input class="edit-input" data-edit-field="title" maxlength="160" value="${escape(card.title)}" aria-label="Título">
+    <p class="edit-hint">Enter salva</p>`;
+  else if (prop === 'description') body = `<textarea class="edit-input" data-edit-field="description" rows="6" maxlength="8000" placeholder="O que precisa ser feito…" aria-label="Descrição">${escape(card.description)}</textarea>
+    <div class="pop-actions"><button type="button" class="btn primary" data-action="edit-save-desc">Salvar</button></div>`;
+  else if (prop === 'steps') body = `<ul class="edit-steps">${card.checklist.map((item) => `<li>${icon(item.done ? 'circle-check' : 'circle')}<span>${escape(item.title)}</span></li>`).join('')}</ul>
+    <input class="edit-input" data-add-step="${card.id}" maxlength="240" placeholder="Novo passo e Enter" aria-label="Novo passo">`;
+  else if (prop === 'image') body = `<label class="edit-drop">${icon('image-plus')}<span><b>Escolher imagem</b><br>ou Ctrl+V / arraste para a ficha</span>
+    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`;
+  else body = popoverOptions(card, prop);
+  panel.innerHTML = `<p class="edit-panel-title">${label}</p>${body}`;
+  stage.replaceChildren(panel);
+  // Nasce da altura da opção escolhida.
+  const from = option.getBoundingClientRect();
+  const to = stage.getBoundingClientRect();
+  panel.style.setProperty('--from-y', `${from.top + from.height / 2 - to.top}px`);
+  openPopover = panel;
+  if (prop === 'due') renderTaskCalendar(panel.querySelector('.pop-calendar'), today());
+  requestAnimationFrame(() => (panel.querySelector('input:not([type=file]):not([type=hidden]), textarea, [aria-pressed=true], .pop-option') || panel)?.focus({ preventScroll: true }));
+}
+
+/** Depois de gravar, a pílula na ficha acende: o valor "pousa" lá. */
+function landValue(prop) {
+  const chip = dialog.querySelector(`.chip-prop[data-prop="${prop}"]`) ||
+    (prop === 'title' && dialog.querySelector('.title-input')) || (prop === 'description' && dialog.querySelector('.desc-input')) ||
+    (prop === 'steps' && dialog.querySelector('.ficha-steps'));
+  chip?.classList.add('just-set');
+  setTimeout(() => chip?.classList.remove('just-set'), 900);
+}
+
 async function pickValue(prop, value, cardId) {
   const field = { status: 'status', assignee: 'assigneeId', due: 'due', priority: 'priority', blocked: 'blocked' }[prop];
   const patch = { [field]: value === '' && (prop === 'assignee' || prop === 'due') ? null : value };
   closePopover();
   const messages = { status: `Etapa: ${stages[value]}.`, assignee: 'Responsável trocado.', due: value ? 'Prazo marcado.' : 'Prazo tirado.',
     priority: 'Prioridade mudada.', blocked: value ? 'Cartão travado.' : 'Cartão destravado.' };
-  if (prop === 'status') { await placeCard(cardId, value); rerenderCard(cardById(cardId)); return; }
+  if (prop === 'status') { await placeCard(cardId, value); rerenderCard(cardById(cardId)); landValue(prop); return; }
   await saveCard(cardId, patch, messages[prop]);
+  landValue(prop);
 }
 
 function cardActivity(card) {
@@ -1078,9 +1182,31 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || !dialog.open || document.querySelector('.viewer') || event.defaultPrevented) return;
   const menu = dialog.querySelector('.menu[open]');
   if (menu) { menu.open = false; return; }
+  if (editor && !openPopover) { closeEditor(); dialog.querySelector('.edit-trigger')?.focus(); return; }
   if (openPopover) { const trigger = dialog.querySelector(`[data-action=prop][data-prop="${openPopover.dataset.prop}"]`); closePopover(); trigger?.focus(); return; }
   if (event.target.matches?.('.title-input, .desc-input')) { event.target.blur(); return; }
   dialog.close();
+});
+
+// Passar o mouse no Editar mostra as opções; o clique fixa.
+document.addEventListener('mouseover', (event) => {
+  const trigger = event.target.closest?.('.edit-trigger');
+  if (trigger && matchMedia('(hover: hover)').matches) openEditor(trigger.dataset.card);
+});
+document.addEventListener('mouseout', (event) => {
+  const trigger = event.target.closest?.('.edit-trigger');
+  if (trigger && !trigger.contains(event.relatedTarget) && !event.relatedTarget?.closest?.('.editor-side')) scheduleEditorClose();
+});
+// Título no modo editar: Enter grava.
+document.addEventListener('keydown', async (event) => {
+  const box = event.target.closest?.('[data-edit-field=title]');
+  if (!box || event.key !== 'Enter' || !box.value.trim()) return;
+  event.preventDefault();
+  const id = openPopover.dataset.card;
+  const value = box.value.replace(/\s+/g, ' ').trim();
+  closePopover();
+  await saveCard(id, { title: value }, 'Título salvo.');
+  landValue('title');
 });
 
 // Título e descrição: escreve no lugar e grava ao sair do campo.
@@ -1107,8 +1233,9 @@ document.addEventListener('keydown', async (event) => {
     const title = add.value.trim();
     add.value = '';
     try {
+      const inPanel = Boolean(add.closest('.edit-panel'));
       await saveCard(card.id, { checklist: [...card.checklist, { title, done: false }] });
-      dialog.querySelector('[data-add-step]')?.focus();
+      if (inPanel) { openEditPanel('steps'); landValue('steps'); } else dialog.querySelector('[data-add-step]')?.focus();
     } catch (error) { message(error.message); }
   }
 });
@@ -1178,7 +1305,7 @@ document.addEventListener('change', async (event) => {
 
 document.addEventListener('click', async (event) => {
   const control = event.target.closest('button[data-action]');
-  if (openPopover && !openPopover.contains(event.target) && !event.target.closest?.('[data-action=prop]')) closePopover();
+  if (openPopover && !openPopover.contains(event.target) && !event.target.closest?.('[data-action=prop], .editor-side')) closePopover();
   if (!control) {
     if (event.target.classList?.contains('viewer')) event.target.remove();
     for (const menu of document.querySelectorAll('.menu[open]')) if (!menu.contains(event.target)) menu.open = false;
@@ -1219,6 +1346,19 @@ document.addEventListener('click', async (event) => {
       }
     } else if (action === 'task-section') {
       setTaskSection(control.dataset.section);
+    } else if (action === 'edit-mode') {
+      if (editor?.dataset.mode === 'pin') closeEditor(); else openEditor(card, { pin: true });
+    } else if (action === 'edit-opt') {
+      openEditor(card, { pin: true, prop: control.dataset.prop });
+    } else if (action === 'edit-close') {
+      closeEditor();
+      dialog.querySelector('.edit-trigger')?.focus();
+    } else if (action === 'edit-save-desc') {
+      const box = openPopover.querySelector('[data-edit-field=description]');
+      const id = openPopover.dataset.card;
+      closePopover();
+      await saveCard(id, { description: box.value }, 'Descrição salva.');
+      landValue('description');
     } else if (action === 'prop') {
       showPopover(control);
     } else if (action === 'pick') {
@@ -1351,8 +1491,9 @@ document.addEventListener('submit', async (event) => {
     } else if (kind === 'new') {
       const card = await request('/cards', 'POST', data);
       view = 'board'; projectId = card.projectId; search = ''; blockedOnly = false;
-      dialog.close(); await refresh({ shell: true }); message('Cartão criado.');
-      root.querySelector(`.card-title[data-card="${card.id}"]`)?.focus();
+      dialog.close(); await refresh({ shell: true }); message('Cartão criado. Agora é só completar.');
+      showCard(cardById(card.id));
+      openEditor(card.id, { pin: true, prop: 'description' });
     } else if (kind === 'comment') {
       const version = Number(form.dataset.version);
       const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version });
