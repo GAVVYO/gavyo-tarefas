@@ -36,7 +36,9 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
     // Versões do contexto (e tentativas recusadas): quem, por qual canal, quando e qual versão leu antes.
     'context_history (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, at BIGINT NOT NULL, data MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',
     // Conversa do projeto (equipe e assistentes), na Central de projetos.
-    'project_messages (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, at BIGINT NOT NULL, data MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))'
+    'project_messages (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, at BIGINT NOT NULL, data MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',
+    // Pushes e pull requests entregues pelo webhook do GitHub.
+    'github_events (id VARCHAR(300) PRIMARY KEY, repo VARCHAR(200) NOT NULL, at BIGINT NOT NULL, data MEDIUMTEXT NOT NULL)'
   ];
   for (const definition of definitions) await query(`CREATE TABLE IF NOT EXISTS ${definition}`);
   return { query, close };

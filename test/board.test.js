@@ -298,3 +298,32 @@ test('presença: quem mandou sinal aparece como online, com a tela e o cartão q
   assert.equal(list.find((item) => item.id === bola.member.id).cardId, cardId);
   assert.equal((await fetch(origin + '/api/presence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
 });
+
+test('webhook do GitHub: só aceita assinatura certa e o push entra na linha do tempo', async (t) => {
+  const { createHmac } = await import('node:crypto');
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store, { commits: async () => ({ commits: [], note: '' }) }).listen(0, '127.0.0.1');
+  const previous = process.env.GITHUB_WEBHOOK_SECRET;
+  process.env.GITHUB_WEBHOOK_SECRET = 'segredo-de-teste';
+  t.after(async () => {
+    process.env.GITHUB_WEBHOOK_SECRET = previous;
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const member = await store.createMember({ name: 'João' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  await store.setProjectContext(project.id, { versaoLida: 0, repositorio: 'GAVVYO/gavyo-tarefas', branch: 'main' }, { ...member, source: 'Web' });
+  const body = JSON.stringify({ ref: 'refs/heads/main', repository: { full_name: 'GAVVYO/gavyo-tarefas' }, sender: { login: 'felipe' },
+    commits: [{ id: 'a'.repeat(40), message: 'Primeiro commit', timestamp: new Date().toISOString(), url: 'https://github.com/x', author: { username: 'felipe' } }] });
+  const send = (signature) => fetch(`${origin}/api/github/webhook`, { method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': signature }, body });
+  assert.equal((await send('sha256=errada')).status, 401);
+  assert.equal((await send(`sha256=${createHmac('sha256', 'segredo-de-teste').update(body).digest('hex')}`)).status, 200);
+  const events = await store.githubEvents('GAVVYO/gavyo-tarefas', 'main');
+  assert.equal(events[0].message, 'Primeiro commit');
+  const activity = await store.projectActivity(project.id, events);
+  assert.ok(activity.some((item) => item.kind === 'commit' && item.short === 'aaaaaaa'));
+});

@@ -35,7 +35,7 @@ export async function serveMcp(req, res, store, actor) {
     { projectId: z.uuid() }, true, ({ projectId }) => store.projectMessages(projectId));
   add('enviar_mensagem_projeto', 'Escreve na conversa do projeto. Use para avisar o que fez, pedir decisão ou responder alguém. Pode citar um item da linha do tempo em ref.',
     { projectId: z.uuid(), text: z.string().min(1).max(4000),
-      ref: z.object({ kind: z.enum(['commit', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).optional() },
+      ref: z.object({ kind: z.enum(['commit', 'pr', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).optional() },
     false, ({ projectId, ...input }) => store.addProjectMessage(projectId, input, actor));
   add('listar_membros', 'Lista responsáveis disponíveis e seus IDs.', {}, true, store.members);
   add('listar_tarefas', 'Lista tarefas ativas. Use minhas=true para ver as atribuídas à pessoa conectada.',

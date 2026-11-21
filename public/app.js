@@ -564,7 +564,7 @@ async function loadHub(id) {
   }
 }
 
-const HUB_ICONS = { commit: 'git-commit-horizontal', contexto: 'file-pen-line', cartao: 'square-kanban' };
+const HUB_ICONS = { pr: 'git-pull-request', commit: 'git-commit-horizontal', contexto: 'file-pen-line', cartao: 'square-kanban' };
 const dayOf = (iso) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Fortaleza' });
 function dayLabel(iso) {
   const day = dayOf(iso);
@@ -576,6 +576,7 @@ function dayLabel(iso) {
 /** Rótulo curto de um item (para citação no chat). */
 function hubLabel(item) {
   if (item.kind === 'commit') return `${item.short} · ${item.message.split('\n')[0].slice(0, 80)}`;
+  if (item.kind === 'pr') return `PR #${item.number} · ${item.title}`.slice(0, 120);
   if (item.kind === 'contexto') return item.rejected ? `Contexto recusado (${item.by.actor})` : `Contexto v${item.version}`;
   return `${item.key || 'Cartão'} · ${item.title}`.slice(0, 120);
 }
@@ -602,10 +603,12 @@ function cardVerb(action) {
 
 function treeItem(item) {
   const who = memberNamed(item.by.actor);
-  const what = item.kind === 'commit' ? `commitou <span class="tree-what">${escape(item.message.split('\n')[0])}</span>`
+  const what = item.kind === 'pr' ? `${item.state} o PR <span class="tree-what">#${item.number} ${escape(item.title)}</span>`
+    : item.kind === 'commit' ? `commitou <span class="tree-what">${escape(item.message.split('\n')[0])}</span>`
     : item.kind === 'contexto' ? (item.rejected ? 'tentou editar o contexto' : `editou o contexto <span class="tree-what">${item.changed.map((key) => CONTEXT_LABELS[key]).join(', ')}</span>`)
     : `${escape(cardVerb(item.action))} <span class="tree-what">${escape(item.key || '')} ${escape(item.title)}</span>`;
   const meta = [
+    item.kind === 'pr' ? `<span>${escape(item.branch)} → ${escape(item.base)}</span>` : '',
     item.kind === 'commit' ? `<code>${escape(item.short)}</code>${item.branch ? `<span>${escape(item.branch)}</span>` : ''}` : '',
     item.kind === 'contexto' && !item.rejected ? `<span>v${item.version}</span>` : '',
     AGENTS.includes(item.by.source) || item.by.source === 'GitHub' ? `<span>${escape(item.by.source)}</span>` : '',
@@ -625,6 +628,7 @@ function treeItem(item) {
 
 function treeDetail(item) {
   const reply = button('Responder no chat', 'hub-reply', 'reply', 'ghost', `data-id="${escape(item.id)}"`);
+  if (item.kind === 'pr') return `<div class="tree-actions">${reply}<a class="btn ghost" href="${escape(item.url)}" target="_blank" rel="noopener noreferrer">${icon('external-link')}Ver PR no GitHub</a></div>`;
   if (item.kind === 'commit') return `<pre class="tree-commit">${escape(item.message)}</pre>
     <div class="tree-actions">${reply}<a class="btn ghost" href="${escape(item.url)}" target="_blank" rel="noopener noreferrer">${icon('external-link')}Ver no GitHub</a></div>`;
   if (item.kind === 'cartao') {

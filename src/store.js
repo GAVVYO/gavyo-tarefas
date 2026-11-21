@@ -392,13 +392,44 @@ export function createStore({ query }) {
           action: entry.action, ...(AGENT_SOURCES.includes(entry.source) ? { readVersion: read ? read.version : null } : {}) });
       });
     }
-    for (const commit of commits) items.push({ kind: 'commit', id: `commit:${commit.sha}`, ...commit });
+    for (const item of commits) items.push(item.kind ? item : { kind: 'commit', id: `commit:${item.sha}`, ...item });
     return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+  }
+
+  /** Pushes e PRs que o webhook do GitHub entregou. */
+  const repoName = (value) => String(value || '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
+  async function saveGithubEvent(kind, payload) {
+    const repo = repoName(payload.repository?.full_name);
+    if (!repo) return;
+    const rows = [];
+    if (kind === 'push') {
+      const branch = String(payload.ref || '').replace(/^refs\/heads\//, '');
+      for (const commit of payload.commits || []) rows.push({ kind: 'commit', id: `commit:${commit.id}`, sha: commit.id, short: commit.id.slice(0, 7),
+        message: String(commit.message || '').slice(0, 2000), at: commit.timestamp, url: commit.url, branch,
+        by: { actor: commit.author?.username || commit.author?.name || payload.sender?.login || 'alguém', source: 'GitHub', at: commit.timestamp } });
+    } else if (kind === 'pull_request' && ['opened', 'closed', 'reopened', 'ready_for_review'].includes(payload.action)) {
+      const pr = payload.pull_request;
+      const state = payload.action === 'closed' ? (pr.merged ? 'mesclou' : 'fechou') : payload.action === 'reopened' ? 'reabriu' : 'abriu';
+      const at = payload.action === 'closed' ? (pr.merged_at || pr.closed_at) : pr.updated_at;
+      rows.push({ kind: 'pr', id: `pr:${pr.number}:${state}`, number: pr.number, title: String(pr.title || '').slice(0, 300), state, url: pr.html_url,
+        branch: pr.head?.ref || '', base: pr.base?.ref || '', at, by: { actor: payload.sender?.login || pr.user?.login || 'alguém', source: 'GitHub', at } });
+    }
+    for (const row of rows) {
+      const data = JSON.stringify(row);
+      const done = await query('UPDATE github_events SET data = ? WHERE id = ?', [data, `${repo}|${row.id}`]);
+      if (!done.affectedRows) await query('INSERT INTO github_events (id, repo, at, data) VALUES (?, ?, ?, ?)', [`${repo}|${row.id}`, repo, Date.parse(row.at) || Date.now(), data]);
+    }
+  }
+  async function githubEvents(repository, branch = '') {
+    const repo = repoName(repository);
+    if (!repo) return [];
+    const rows = await query('SELECT data FROM github_events WHERE repo = ? ORDER BY at DESC LIMIT 200', [repo]);
+    return rows.map((row) => JSON.parse(row.data)).filter((item) => !branch || item.kind === 'pr' || item.branch === branch);
   }
 
   const messageInput = z.object({
     text: z.string().trim().min(1, 'Escreva a mensagem.').max(4000),
-    ref: z.object({ kind: z.enum(['commit', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).nullable().optional()
+    ref: z.object({ kind: z.enum(['commit', 'pr', 'contexto', 'cartao']), id: z.string().max(120), label: z.string().max(200) }).nullable().optional()
   });
   async function projectMessages(projectId) {
     await contextRow(projectId);
@@ -424,5 +455,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, projectMessages, addProjectMessage, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

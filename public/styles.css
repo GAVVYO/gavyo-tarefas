@@ -1641,3 +1641,4 @@ li.ctx-version{cursor:default}
 @media(prefers-reduced-motion:reduce){
   .segmented-thumb,.tree[data-first=true] .tree-item,.tree-detail,.chat-msg[data-new=true],.hub-cite,.hub-plus{transition:none;animation:none}
 }
+.tree-item[data-kind=pr] .tree-node{border-color:#a9c99399}
