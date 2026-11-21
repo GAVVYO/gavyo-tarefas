@@ -2,6 +2,15 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'no
 import { promisify } from 'node:util';
 import { z } from 'zod';
 
+// Mensagens de validação em português (também chegam às IAs pelo MCP).
+z.config(z.locales.pt());
+z.config({ customError: (issue) => {
+  if (issue.origin === 'string' && issue.code === 'too_big') return `use no máximo ${issue.maximum} caracteres.`;
+  if (issue.origin === 'string' && issue.code === 'too_small') return issue.minimum <= 1 ? 'não pode ficar vazio.' : `use pelo menos ${issue.minimum} caracteres.`;
+  if (issue.origin === 'array' && issue.code === 'too_big') return `no máximo ${issue.maximum} itens.`;
+  return undefined;
+} });
+
 const derive = promisify(scrypt);
 const digest = (token) => createHash('sha256').update(token).digest('hex');
 const date = z.iso.date();

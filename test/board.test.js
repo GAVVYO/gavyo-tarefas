@@ -30,6 +30,9 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   };
 
   assert.equal((await request('/api/board')).status, 401);
+  // Cache: ícones e fonte guardados por 7 dias; o app sempre conferido.
+  assert.match((await fetch(`${origin}/assets/icons/plus.svg`)).headers.get('cache-control'), /max-age=604800/);
+  assert.equal((await fetch(`${origin}/app.js`)).headers.get('cache-control'), 'no-cache');
   assert.equal((await request('/mcp')).status, 401);
   const profiles = await request('/api/profiles');
   assert.deepEqual(profiles.body, [{ id: member.id, name: member.name }]);
@@ -103,6 +106,12 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
   assert.equal(viaWeb.body.updated.source, 'Web');
   assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
+  // O erro diz o que corrigir, em português (antes: sempre "Confira os campos informados.").
+  const badLink = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } });
+  assert.match(badLink.body.error, /http ou https/);
+  const longTitle = await request('/api/cards', { method: 'POST', headers, body: { projectId: project.id, title: 'x'.repeat(200) } });
+  assert.equal(longTitle.status, 400);
+  assert.match(longTitle.body.error, /^Título: /);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {

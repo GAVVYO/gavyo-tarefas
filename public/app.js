@@ -10,6 +10,8 @@ const scrim = Object.assign(document.createElement('div'), { className: 'task-sc
 document.body.append(scrim);
 scrim.addEventListener('click', () => dialog.close());
 dialog.addEventListener('close', () => { scrim.hidden = true; closeEditor(); void sendPresence(); });
+// Com a ficha aberta, o resto da página fica inerte: Tab e leitor de tela não vão parar atrás do fundo escuro.
+new MutationObserver(() => { root.inert = dialog.open; }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
@@ -75,6 +77,11 @@ const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeSt
 const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' }).format(new Date());
 const cardById = (id) => [...board.cards, ...board.archive].find((card) => card.id === id);
 
+/** Falha de rede vira aviso em português (em vez de "Failed to fetch"). */
+function offline() {
+  throw Object.assign(new Error('Sem conexão com a internet. Nada foi salvo; tente de novo quando voltar.'), { status: 0 });
+}
+
 async function request(path, method = 'GET', data) {
   const writing = method !== 'GET';
   if (writing) {
@@ -84,7 +91,7 @@ async function request(path, method = 'GET', data) {
   try {
     const response = await fetch('/api' + path, {
       method, ...(data ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) } : {})
-    });
+    }).catch(offline);
     const body = await response.json();
     if (!response.ok) throw Object.assign(new Error(body.error), { status: response.status });
     return body;
@@ -181,7 +188,7 @@ async function readBoard(tag, signal) {
   const response = await fetch('/api/board', {
     headers: tag ? { 'If-None-Match': tag } : {},
     signal
-  });
+  }).catch((error) => { if (error.name === 'AbortError' || error.name === 'TimeoutError') throw error; return offline(); });
   if (response.status === 304) return null;
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error), { status: response.status });
@@ -1478,7 +1485,7 @@ async function uploadPrints(cardId, files) {
   try {
     for (const file of images) {
       const body = await shrinkImage(file);
-      const response = await fetch(`/api/cards/${cardId}/attachments`, { method: 'POST', headers: { 'content-type': body.type || file.type }, body });
+      const response = await fetch(`/api/cards/${cardId}/attachments`, { method: 'POST', headers: { 'content-type': body.type || file.type }, body }).catch(offline);
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Não deu para enviar o print.');
     }
     const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
@@ -1644,7 +1651,7 @@ document.addEventListener('change', async (event) => {
   if (bgInput?.files?.[0]) {
     try {
       const body = await shrinkImage(bgInput.files[0]);
-      const response = await fetch('/api/preferences/background', { method: 'POST', headers: { 'content-type': body.type || bgInput.files[0].type }, body });
+      const response = await fetch('/api/preferences/background', { method: 'POST', headers: { 'content-type': body.type || bgInput.files[0].type }, body }).catch(offline);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Não deu para usar essa imagem.');
       boardRevision++;
@@ -2271,7 +2278,8 @@ document.addEventListener('visibilitychange', () => {
   void sendPresence();
   if (!document.hidden && view === 'context' && hubSector === 'atividade' && projectId) void loadHub(projectId);
 });
-window.addEventListener('online', () => autoRefresh(0));
+window.addEventListener('online', () => { autoRefresh(0); if (board) message('Conexão de volta. O quadro foi atualizado.'); });
+window.addEventListener('offline', () => { if (board) message('Sem internet. O que você mudar agora não será salvo até a conexão voltar.'); });
 
 async function start() {
   try {

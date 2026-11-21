@@ -20,6 +20,16 @@ const IMAGE_TYPES = {
 };
 const MAX_IMAGE = 8 * 1024 * 1024;
 
+const FIELD_LABELS = {
+  title: 'Título', description: 'Descrição', comment: 'Comentário', text: 'Mensagem', name: 'Nome', pin: 'PIN',
+  currentPin: 'PIN atual', newPin: 'PIN novo', url: 'Link', links: 'Links', due: 'Prazo', blocked: 'Motivo do bloqueio',
+  checklist: 'Passos', resumo: 'O que é', objetivo: 'No que estamos agora', regras: 'Como trabalhamos', decisoes: 'Decisões',
+  stack: 'Stack', producao: 'Produção', teste: 'Teste', repositorio: 'Repositório', branch: 'Branch', versaoLida: 'Versão lida'
+};
+
+/** Avatares só para quem entrou: o navegador guarda, a CDN não. */
+const privateCache = (res) => res.setHeader('Cache-Control', 'private, max-age=604800');
+
 export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits } = {}) {
   const uploadRoot = resolve(uploads);
   const presence = new Map();
@@ -122,7 +132,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     await store.revoke(credential(req));
     res.clearCookie('gavyo_session', { path: '/', sameSite: 'strict', secure: production }).json({ ok: true });
   });
-  app.use('/api/avatar-assets', express.static(file('../assets/avatars/'), { index: false }));
+  app.use('/api/avatar-assets', express.static(file('../assets/avatars/'), { index: false, maxAge: '7d', setHeaders: privateCache }));
   app.get('/api/board', async (req, res) => {
     const [projects, members, preferences, versions] = await Promise.all([
       store.projects(), store.members(), store.preferences(req.actor.id), store.cardVersions()
@@ -261,13 +271,24 @@ export function createApp(store, { production = false, origin = '', uploads = pr
 
   app.get('/assets/model-viewer.min.js', (_req, res) =>
     res.sendFile(file('../node_modules/@google/model-viewer/dist/model-viewer.min.js')));
-  app.use('/assets/manrope', express.static(file('../node_modules/@fontsource-variable/manrope/files/')));
-  app.use('/assets/icons', express.static(file('../node_modules/lucide-static/icons/')));
-  app.use(express.static(file('../public/')));
+  // Fonte, ícones e imagens não mudam entre publicações: a CDN e o navegador guardam por 7 dias.
+  // app.js, styles.css e index.html são conferidos sempre, para a versão nova chegar na hora.
+  app.use('/assets/manrope', express.static(file('../node_modules/@fontsource-variable/manrope/files/'), { maxAge: '7d' }));
+  app.use('/assets/icons', express.static(file('../node_modules/lucide-static/icons/'), { maxAge: '7d' }));
+  app.use(express.static(file('../public/'), { setHeaders: (res, path) => {
+    if (/\.(svg|png|jpe?g|webp|gif|woff2?|glb)$/i.test(path)) res.setHeader('Cache-Control', 'public, max-age=604800');
+    else res.setHeader('Cache-Control', 'no-cache');
+  } }));
   app.use((error, _req, res, next) => {
     if (res.headersSent) return next(error);
     if (error instanceof AppError) return res.status(error.status).json({ error: error.message });
-    if (error instanceof z.ZodError) return res.status(400).json({ error: 'Confira os campos informados.' });
+    if (error instanceof z.ZodError) {
+      // Diz qual campo e o que está errado, em vez de um "confira os campos" genérico.
+      const issue = error.issues[0];
+      const field = FIELD_LABELS[[...(issue?.path || [])].reverse().find((key) => FIELD_LABELS[key])];
+      if (!issue) return res.status(400).json({ error: 'Confira os campos informados.' });
+      return res.status(400).json({ error: issue.code === 'custom' || !field ? issue.message : `${field}: ${issue.message}` });
+    }
     if (error.code === 'ER_DUP_ENTRY' || /UNIQUE constraint failed/.test(error.message)) {
       return res.status(409).json({ error: 'Já existe um registro com esses dados.' });
     }
