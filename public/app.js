@@ -1067,7 +1067,7 @@ function showCard(card, origin, focus = true) {
     </div></details>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
-    <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
+    <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}" hidden>
       <textarea name="comment" maxlength="2000" rows="1" required aria-label="Mensagem para a equipe"
         placeholder="Escreva para a equipe e para os assistentes…"></textarea>
       <div class="composer-bar">
@@ -1111,11 +1111,11 @@ function showCard(card, origin, focus = true) {
       data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${prints.length}"><img src="${fileUrl(card, item)}" alt="" loading="lazy" decoding="async"></button></li>`).join('')}</ul>` : ''}
     <div class="activity-head">
       <nav class="inspector-nav" aria-label="Atividade do cartão">
-        ${button('Conversa', 'task-section', '', 'ghost', 'data-section="conversation" aria-pressed="true"')}
-        ${button('Histórico', 'task-section', '', 'ghost', 'data-section="history" aria-pressed="false"')}
+        ${button(card.comments.length ? `Conversa · ${card.comments.length}` : 'Conversa', 'task-section', '', 'ghost', 'data-section="conversation" aria-expanded="false" aria-controls="task-conversation"')}
+        ${button('Histórico', 'task-section', '', 'ghost', 'data-section="history" aria-expanded="false" aria-controls="task-history"')}
       </nav>
     </div>
-    <section id="task-conversation" data-task-section="conversation"><div class="thread" id="task-comments">${cardActivity(card)}</div></section>
+    <section id="task-conversation" data-task-section="conversation" hidden><div class="thread" id="task-comments">${cardActivity(card)}</div></section>
     <section id="task-history" data-task-section="history" hidden><ol class="history" id="task-history-list">${cardHistory(card)}</ol></section>
   </div>`, null, { details, footer, origin, more });
   paintTrails(dialog);
@@ -1130,10 +1130,11 @@ function autoGrow(box) {
   box.style.height = `${box.scrollHeight}px`;
 }
 
+/** Abre a conversa ou o histórico; null recolhe os dois (a ficha abre assim: os passos vêm primeiro). */
 function setTaskSection(section) {
-  const target = section === 'history' ? 'history' : 'conversation';
+  const target = section === 'history' || section === 'conversation' ? section : null;
   for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== target;
-  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) control.setAttribute('aria-pressed', String(control.dataset.section === target));
+  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) control.setAttribute('aria-expanded', String(control.dataset.section === target));
   dialog.querySelector('.composer')?.toggleAttribute('hidden', target !== 'conversation');
   const thread = dialog.querySelector('#task-comments');
   if (thread && target === 'conversation') thread.scrollIntoView({ block: 'nearest' });
@@ -1788,7 +1789,7 @@ document.addEventListener('click', async (event) => {
         block?.focus({ preventScroll: true });
       }
     } else if (action === 'task-section') {
-      setTaskSection(control.dataset.section);
+      setTaskSection(control.getAttribute('aria-expanded') === 'true' ? null : control.dataset.section);
     } else if (action === 'edit-mode') {
       if (editor?.dataset.mode === 'pin') closeEditor(); else openEditor(card, { pin: true });
     } else if (action === 'edit-opt') {
