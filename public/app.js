@@ -2236,7 +2236,7 @@ document.addEventListener('dragstart', (event) => {
   if (card && event.target === card) {
     dragged = card.dataset.id;
     event.dataTransfer.setData('text/plain', dragged);
-    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.effectAllowed = 'copyMove';
   }
 });
 document.addEventListener('dragover', (event) => {

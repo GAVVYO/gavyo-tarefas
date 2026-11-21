@@ -38,7 +38,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     <div class="team-chat-attachments" aria-live="polite"></div>
     <div class="team-chat-tools">
       <label class="btn team-chat-upload">Enviar imagem<input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
-      <details class="team-chat-picker"><summary class="btn">Mencionar cartão</summary>
+      <details class="team-chat-picker"><summary class="btn">Adicionar cartão</summary>
         <div class="team-chat-card-menu"><label>Buscar cartão<input type="search" class="team-chat-card-search" placeholder="Número ou título"></label><div class="team-chat-card-results"></div></div>
       </details>
     </div>
@@ -83,14 +83,82 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       pending.append(remove);
     });
   }
+  function mentionCard(card) {
+    if (!card || !user || sending) return false;
+    if (mentioned.some(c => c.id === card.id)) return true;
+    if (mentioned.length >= 10) { feedback.textContent = 'Use no máximo 10 cartões por mensagem.'; return false; }
+    mentioned.push(card); renderPending(); return true;
+  }
+  let draggedCard = null, delivering = false;
+  function clearDrag() {
+    draggedCard = null;
+    trigger.classList.remove('team-chat-ready', 'team-chat-over');
+  }
+  document.addEventListener('dragstart', event => {
+    const element = event.target.closest?.('.card[draggable="true"]');
+    const card = element && (getCards?.() || []).find(c => c.id === element.dataset.id);
+    if (!user || !card || delivering || sending) return;
+    draggedCard = { card, rect: element.getBoundingClientRect() };
+    trigger.classList.add('team-chat-ready');
+  });
+  document.addEventListener('dragend', clearDrag);
+  for (const target of [trigger, panel]) {
+    target.addEventListener('dragover', event => {
+      if (!draggedCard || sending || delivering) return;
+      event.preventDefault(); event.stopPropagation();
+      event.dataTransfer.dropEffect = 'copy';
+      trigger.classList.add('team-chat-over');
+    });
+    target.addEventListener('dragleave', event => {
+      if (!target.contains(event.relatedTarget)) trigger.classList.remove('team-chat-over');
+    });
+    target.addEventListener('drop', async event => {
+      if (!draggedCard || sending || delivering) return;
+      event.preventDefault(); event.stopPropagation();
+      const { card, rect } = draggedCard;
+      clearDrag();
+      if (!mentionCard(card)) return;
+      const current = session;
+      delivering = true;
+      try {
+        if (!panel.open) await carryToChat(card, rect);
+        if (current !== session || !user) return;
+        open(); feedback.textContent = `${card.key} pronto para enviar.`; input.focus();
+      } finally { delivering = false; }
+    });
+  }
+  async function carryToChat(card, from) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const to = trigger.getBoundingClientRect();
+    const flight = document.createElement('div');
+    flight.className = 'chat-delivery'; flight.setAttribute('popover', 'manual');
+    flight.setAttribute('aria-hidden', 'true');
+    const hawk = document.createElement('img'); hawk.src = '/aguia-dourada.svg'; hawk.alt = '';
+    const cargo = document.createElement('span'); cargo.className = 'chat-delivery-card';
+    const key = document.createElement('b'); key.textContent = card.key;
+    const title = document.createElement('span'); title.textContent = card.title;
+    cargo.append(key, title); flight.append(hawk, cargo); document.body.append(flight);
+    flight.showPopover();
+    const x = Math.max(12, Math.min(innerWidth - 200, from.left));
+    const y = Math.max(70, Math.min(innerHeight - 100, from.top));
+    const endX = to.left + to.width / 2 - 90, endY = to.top - 60;
+    try {
+      await flight.animate([
+        { transform: `translate(${x}px,${y}px) rotate(-8deg)`, opacity: 0 },
+        { transform: `translate(${x}px,${y - 35}px) rotate(-5deg)`, opacity: 1, offset: .18 },
+        { transform: `translate(${(x + endX) / 2}px,${Math.min(y, endY) - 70}px) rotate(5deg)`, opacity: 1, offset: .58 },
+        { transform: `translate(${endX}px,${endY}px) scale(.5) rotate(-3deg)`, opacity: 0 }
+      ], { duration: 720, easing: 'ease-in-out', fill: 'forwards' }).finished;
+    } finally { flight.remove(); }
+  }
   function cardResults() {
     const results = find('.team-chat-card-results'); results.replaceChildren();
     const query = searchCards.value.trim().toLocaleLowerCase('pt-BR');
     const cards = (getCards?.() || []).filter(c => `${c.key} ${c.title}`.toLocaleLowerCase('pt-BR').includes(query)).slice(0,30);
     for (const card of cards) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = `${card.key}: ${card.title}`;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = `${card.key} · ${card.title}`;
       button.onclick = () => {
-        if (mentioned.length < 10 && !mentioned.some(c => c.id === card.id)) mentioned.push(card);
+        mentionCard(card);
         renderPending(); picker.open = false; input.focus();
       };
       results.append(button);
@@ -407,6 +475,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     disconnect();
     user = next;
     if (panel.open) panel.close();
+    clearDrag();
     attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending(); picker.open = false;
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
     input.value = ''; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
