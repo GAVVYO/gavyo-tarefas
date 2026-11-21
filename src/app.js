@@ -153,6 +153,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   const needPush = () => { if (!push) throw new AppError(503, 'Avisos fora do site não estão ligados neste servidor.'); return push; };
   app.get('/api/push/key', async (_req, res) => res.json({ publicKey: (await needPush().keys()).publicKey }));
   app.post('/api/push/subscriptions', async (req, res) => { await needPush().subscribe(req.actor.id, req.body?.subscription); res.status(201).json({ ok: true }); });
+  app.post('/api/push/test', async (req, res) => res.json(await needPush().test(req.actor.id)));
   app.delete('/api/push/subscriptions', async (req, res) => { await needPush().unsubscribe(req.actor.id, req.body?.endpoint); res.json({ ok: true }); });
   app.post('/api/team/images', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
     const type = IMAGE_TYPES[req.get('content-type')];
