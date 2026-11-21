@@ -118,7 +118,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     // Imagens só na rota de anexos; um formulário de outro site não consegue mandar esse tipo sem pedir licença ao servidor.
-    const image = req.method === 'POST' && /^\/(cards\/[^/]+\/attachments|preferences\/background)$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
+    const image = req.method === 'POST' && /^\/(cards\/[^/]+\/attachments|preferences\/background|team\/images)$/.test(req.path) && Boolean(req.is(Object.keys(IMAGE_TYPES)));
     if (req.method !== 'GET' && ((!req.is('application/json') && !image) ||
       (req.get('origin') && req.get('origin') !== (origin || `${req.protocol}://${req.get('host')}`)))) {
       throw new AppError(403, 'Origem da solicitação inválida.');
@@ -154,6 +154,29 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.get('/api/push/key', async (_req, res) => res.json({ publicKey: (await needPush().keys()).publicKey }));
   app.post('/api/push/subscriptions', async (req, res) => { await needPush().subscribe(req.actor.id, req.body?.subscription); res.status(201).json({ ok: true }); });
   app.delete('/api/push/subscriptions', async (req, res) => { await needPush().unsubscribe(req.actor.id, req.body?.endpoint); res.json({ ok: true }); });
+  app.post('/api/team/images', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
+    const type = IMAGE_TYPES[req.get('content-type')];
+    if (!type || !Buffer.isBuffer(req.body) || !type.magic(req.body)) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF válida.');
+    const id = crypto.randomUUID();
+    const dir = join(uploadRoot, 'team');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const path = join(dir, id + '.' + type.ext);
+    await writeFile(path, req.body, { mode: 0o600 });
+    try {
+      res.status(201).json(await store.saveTeamImage({ id, type: req.get('content-type'), size: req.body.length, url: '/api/team/images/' + id }, req.actor));
+    } catch (error) { await unlink(path).catch(() => {}); throw error; }
+  });
+  app.get('/api/team/images/:id', async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const image = await store.teamImage(id);
+    const ext = IMAGE_TYPES[image.type]?.ext;
+    if (!ext) throw new AppError(404, 'Imagem não encontrada.');
+    const bytes = await readFile(join(uploadRoot, 'team', id + '.' + ext)).catch(() => null);
+    if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
+    res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=604800' }).send(bytes);
+  });
+  app.get('/api/team/reactions', async (req, res) => res.json(await store.teamReactions(String(req.query.ids || '').split(','))));
+  app.post('/api/team/messages/:id/reaction', async (req, res) => res.json(await store.reactTeamMessage(req.params.id, req.body, req.actor)));
   app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
   app.get('/api/team/messages/stream', async (req, res) => {
     const cursor = req.get('Last-Event-ID') ?? req.query.after ?? '0';
@@ -162,6 +185,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
       'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 1000\n\n');
+    let reactionRevision = -1;
     let closed = false, draining = false, queued = false, heartbeat = 0;
     const stop = () => { closed = true; clearInterval(timer); unsubscribe(); };
     const drain = async () => {
@@ -173,6 +197,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
           queued = false;
           // A autorização continua valendo durante a conexão, não só na abertura.
           if (!(await store.identity(credential(req), 'Web'))) { res.end(); stop(); return; }
+          const revision = await store.teamReactionRevision();
+          if (reactionRevision !== revision) {
+            reactionRevision = revision;
+            res.write(`event: reactions-changed\ndata: ${revision}\n\n`);
+          }
           const page = await store.teamMessages({ after, limit: 100 });
           if (closed) return;
           if (page.messages.length) {
