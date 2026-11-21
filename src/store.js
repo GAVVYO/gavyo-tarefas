@@ -39,9 +39,22 @@ export class AppError extends Error {
 
 export function createStore({ query }) {
   const first = async (sql, args) => (await query(sql, args))[0];
-  const member = (id) => first('SELECT id, name, role FROM members WHERE id = ?', [id]);
-  const projects = () => query('SELECT id, name FROM projects ORDER BY name');
-  const members = () => query('SELECT id, name, role FROM members ORDER BY name');
+  /**
+   * Projetos e membros quase nunca mudam e são pedidos a cada sincronização:
+   * ficam em memória e o cache é limpo quando o próprio app grava (1 min no máximo, por segurança).
+   */
+  const cached = new Map();
+  const remember = (key, load) => {
+    const hit = cached.get(key);
+    if (hit && Date.now() - hit.at < 60000) return hit.value;
+    const value = load().catch((error) => { cached.delete(key); throw error; });
+    cached.set(key, { at: Date.now(), value });
+    return value;
+  };
+  const forget = () => cached.clear();
+  const projects = () => remember('projects', () => query('SELECT id, name FROM projects ORDER BY name'));
+  const members = () => remember('members', () => query('SELECT id, name, role FROM members ORDER BY name'));
+  const member = async (id) => (await members()).find((item) => item.id === id);
   const project = (id) => first('SELECT id, name FROM projects WHERE id = ?', [id]);
 
   async function encodePin(pin) {
@@ -55,6 +68,7 @@ export function createStore({ query }) {
     // Keep the legacy unique email column compatible with existing databases.
     await query('INSERT INTO members (id, email, name, password, role) VALUES (?, ?, ?, ?, ?)',
       [id, `${id}@perfil.invalid`, name, await encodePin(pin), role]);
+    forget();
     return { id, name, role };
   }
 
@@ -121,6 +135,7 @@ export function createStore({ query }) {
     const { name } = projectInput.parse(input);
     const id = randomUUID();
     await query('INSERT INTO projects (id, name) VALUES (?, ?)', [id, name]);
+    forget();
     return { id, name };
   }
 
@@ -138,6 +153,7 @@ export function createStore({ query }) {
    */
   const projectKey = (name) => (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[A-Za-z0-9]+/g) || ['GT'])
     .map((word) => word[0]).join('').slice(0, 3).toUpperCase().padEnd(2, 'T');
+  /** Numera cartões antigos (de antes dos números). Só roda quando a leitura acha um cartão sem número. */
   async function numberCards() {
     const rows = await query('SELECT id, project_id, version, document FROM cards');
     const cards = rows.map((row) => ({ row, card: JSON.parse(row.document) }));
@@ -179,11 +195,12 @@ export function createStore({ query }) {
   const cardVersions = () => query('SELECT id, version FROM cards ORDER BY id');
 
   async function readCards(projectId) {
-    await numberCards();
-    const rows = projectId
+    const load = async () => (projectId
       ? await query('SELECT version, document FROM cards WHERE project_id = ?', [projectId])
-      : await query('SELECT version, document FROM cards');
-    return rows.map(decode).sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
+      : await query('SELECT version, document FROM cards')).map(decode);
+    let cards = await load();
+    if (cards.some((card) => !card.number)) { await numberCards(); cards = await load(); }
+    return cards.sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
   }
 
   async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
@@ -277,7 +294,7 @@ export function createStore({ query }) {
   /** Fundos prontos; "imagem" usa a foto que a pessoa enviou. */
   const BACKGROUNDS = ['noite', 'couro', 'asfalto', 'entardecer', 'imagem'];
   async function preferences(id) {
-    const row = await first('SELECT data FROM preferences WHERE member_id = ?', [id]);
+    const row = await remember(`preferences:${id}`, () => first('SELECT data FROM preferences WHERE member_id = ?', [id]));
     return { background: 'noite', backgroundFile: null, ...(row ? JSON.parse(row.data) : {}) };
   }
   async function setPreferences(id, input) {
@@ -292,6 +309,7 @@ export function createStore({ query }) {
     const data = JSON.stringify(next);
     const updated = await query('UPDATE preferences SET data = ? WHERE member_id = ?', [data, id]);
     if (!updated.affectedRows) await query('INSERT INTO preferences (member_id, data) VALUES (?, ?)', [id, data]);
+    cached.delete(`preferences:${id}`);
     return { previous: current, saved: next };
   }
 

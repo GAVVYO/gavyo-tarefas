@@ -327,3 +327,25 @@ test('webhook do GitHub: só aceita assinatura certa e o push entra na linha do 
   const activity = await store.projectActivity(project.id, events);
   assert.ok(activity.some((item) => item.kind === 'commit' && item.short === 'aaaaaaa'));
 });
+
+test('custo: ler o quadro não relê todos os cartões nem projetos e membros a cada vez', async () => {
+  const database = await openDatabase({ path: ':memory:' });
+  let queries = [];
+  const counted = { ...database, query: (sql, args) => { queries.push(sql); return database.query(sql, args); } };
+  const store = createStore(counted);
+  const member = await store.createMember({ name: 'João' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  await store.createCard({ projectId: project.id, title: 'Um' }, { ...member, source: 'Web' });
+  await store.boardCards();
+  queries = [];
+  await store.boardCards();
+  assert.equal(queries.filter((sql) => /FROM cards/.test(sql)).length, 1, queries.join('\n'));
+  await Promise.all([store.projects(), store.members()]);
+  queries = [];
+  await Promise.all([store.projects(), store.members()]);
+  assert.equal(queries.length, 0, queries.join('\n'));
+  // Projeto novo aparece na hora (o cache é limpo ao gravar).
+  await store.createProject({ name: 'Outro' });
+  assert.equal((await store.projects()).length, 2);
+  await database.close();
+});

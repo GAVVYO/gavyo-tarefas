@@ -234,7 +234,7 @@ function renderShell() {
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
       ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
-      ${button('Central de projetos', 'context', 'folder-kanban', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
+      ${button('<span class="nav-long">Central de projetos</span><span class="nav-short">Projetos</span>', 'context', 'folder-kanban', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
     </nav>
   </header>
   <section class="heading" ${view === 'context' ? 'hidden' : ''}>
@@ -1240,6 +1240,7 @@ function closeEditor() {
   if (!editor) return;
   const leaving = editor;
   editor = null;
+  hoverPaused = true;
   closePopover();
   delete document.documentElement.dataset.editing;
   dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'false');
@@ -1541,9 +1542,13 @@ document.addEventListener('keydown', (event) => {
 });
 
 // Passar o mouse no Editar mostra as opções; o clique fixa.
+// Ao fechar, a ficha desliza de volta e o botão passa por baixo do mouse parado: isso não pode reabrir.
+// O passar-o-mouse só volta a valer quando o mouse se mexe de verdade.
+let hoverPaused = false;
+document.addEventListener('pointermove', (event) => { if (event.movementX || event.movementY) hoverPaused = false; }, { passive: true });
 document.addEventListener('mouseover', (event) => {
   const trigger = event.target.closest?.('.edit-trigger');
-  if (trigger && matchMedia('(hover: hover)').matches) openEditor(trigger.dataset.card);
+  if (trigger && !hoverPaused && matchMedia('(hover: hover)').matches) openEditor(trigger.dataset.card);
 });
 document.addEventListener('mouseout', (event) => {
   const trigger = event.target.closest?.('.edit-trigger');
