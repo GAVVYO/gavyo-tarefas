@@ -348,7 +348,10 @@ export function createStore({ query }) {
       updated.history.push(event(actor, actions.join(', ')));
       const result = await query('UPDATE cards SET document = ?, version = ? WHERE id = ? AND version = ?',
         [JSON.stringify(updated), version + 1, id, version]);
-      if (result.affectedRows === 1) return { ...updated, version: version + 1 };
+      if (result.affectedRows === 1) {
+        if (comment) emit({ type: 'comment', card: updated, comment, actor });
+        return { ...updated, version: version + 1 };
+      }
     }
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
   }
@@ -615,7 +618,7 @@ export function createStore({ query }) {
     after: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
   }).strict().refine(q => q.before === undefined || q.after === undefined, 'Use before ou after, não os dois.');
   const chatInput = z.object({ text: z.string().trim().max(4000).default(''), clientId: z.uuid(),
-    images: z.array(z.uuid()).max(4).default([]), cards: z.array(z.uuid()).max(10).default([])
+    images: z.array(z.uuid()).max(4).default([]), cards: z.array(z.uuid()).max(10).default([]), replyTo: z.uuid().nullable().default(null), mentions: z.array(z.uuid()).max(20).default([])
   }).strict().refine(v => v.text || v.images.length || v.cards.length, 'Escreva uma mensagem ou escolha um anexo.');
   async function saveTeamImage(image, actor) {
     await query('INSERT INTO team_images (id, member_id, data) VALUES (?, ?, ?)', [image.id, actor.id, JSON.stringify(image)]);
@@ -627,6 +630,12 @@ export function createStore({ query }) {
     return { ...JSON.parse(row.data), memberId: row.member_id };
   }
   const chatRow = row => ({ ...JSON.parse(row.data), sequence: Number(row.sequence) });
+  const eventListeners = new Set();
+  /** Avisos de fora (push): quem ouve recebe mensagens do chat e comentários de cartão. Falha aqui nunca quebra a gravação. */
+  function onEvent(listener) { eventListeners.add(listener); return () => eventListeners.delete(listener); }
+  function emit(event) {
+    for (const listener of eventListeners) Promise.resolve().then(() => listener(event)).catch((error) => console.error('Aviso:', error.message));
+  }
   const chatListeners = new Set();
   function subscribeTeamMessages(listener) {
     chatListeners.add(listener);
@@ -646,7 +655,7 @@ export function createStore({ query }) {
       nextAfter: messages.at(-1)?.sequence ?? after ?? null };
   }
   async function addTeamMessage(input, actor) {
-    const { text, clientId, images: imageIds, cards: cardIds } = chatInput.parse(input);
+    const { text, clientId, images: imageIds, cards: cardIds, replyTo, mentions: mentionIds } = chatInput.parse(input);
     const images = await Promise.all([...new Set(imageIds)].map(async id => {
       const image = await teamImage(id);
       if (image.memberId !== actor.id) throw new AppError(403, 'Só é possível anexar imagens enviadas por você.');
@@ -657,19 +666,50 @@ export function createStore({ query }) {
       const card = await getCard(id);
       return { id: card.id, key: card.key, title: card.title };
     }));
-    const message = { id: clientId, text, images, cards, author: { id: actor.id, name: actor.name }, at: new Date().toISOString() };
+    const mentions = await Promise.all([...new Set(mentionIds)].map(async id => {
+      const person = await member(id); if (!person) throw new AppError(404, 'Pessoa não encontrada.');
+      return { id: person.id, name: person.name };
+    }));
+    let reply = null;
+    if (replyTo) {
+      const row = await first('SELECT data FROM team_messages WHERE id = ?', [replyTo]);
+      if (!row) throw new AppError(404, 'Mensagem original não encontrada.');
+      const original = JSON.parse(row.data);
+      reply = { id: replyTo, author: original.author, text: original.text.slice(0,300) || (original.images?.length ? 'Imagem' : 'Cartão') };
+    }
+    const message = { id: clientId, text, images, cards, reply, mentions, author: { id: actor.id, name: actor.name }, at: new Date().toISOString() };
     try {
       await query('INSERT INTO team_messages (id, member_id, data) VALUES (?, ?, ?)', [clientId, actor.id, JSON.stringify(message)]);
     } catch (error) {
       if (error.code !== 'ER_DUP_ENTRY' && !/UNIQUE constraint failed/.test(error.message)) throw error;
       const existing = await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]);
       const previous = existing && chatRow(existing);
-      if (!previous || previous.author.id !== actor.id || previous.text !== text || JSON.stringify((previous.images || []).map(i => i.id)) !== JSON.stringify(images.map(i => i.id)) || JSON.stringify((previous.cards || []).map(c => c.id)) !== JSON.stringify(cards.map(c => c.id))) throw new AppError(409, 'Identificador de mensagem já usado.');
+      if (!previous || previous.author.id !== actor.id || previous.text !== text || (previous.reply?.id || null) !== replyTo || JSON.stringify((previous.mentions || []).map(p => p.id)) !== JSON.stringify(mentions.map(p => p.id)) || JSON.stringify((previous.images || []).map(i => i.id)) !== JSON.stringify(images.map(i => i.id)) || JSON.stringify((previous.cards || []).map(c => c.id)) !== JSON.stringify(cards.map(c => c.id))) throw new AppError(409, 'Identificador de mensagem já usado.');
       return previous;
     }
     const saved = chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
     for (const listener of chatListeners) listener();
+    emit({ type: 'team', message: saved });
     return saved;
+  }
+  async function reactTeamMessage(id, input, actor) {
+    z.uuid().parse(id);
+    const { emoji } = z.object({ emoji: z.string().max(32).refine(value => value === '' || /^\p{RGI_Emoji}$/v.test(value), 'Escolha um único emoji.') }).strict().parse(input);
+    if (!(await first('SELECT id FROM team_messages WHERE id = ?', [id]))) throw new AppError(404, 'Mensagem não encontrada.');
+    await query('INSERT INTO team_reactions (message_id, member_id, emoji) VALUES (?, ?, ?)', [id, actor.id, emoji]);
+    for (const listener of chatListeners) listener();
+    return { ok: true };
+  }
+  async function teamReactionRevision() {
+    return Number((await first('SELECT MAX(sequence) AS revision FROM team_reactions')).revision || 0);
+  }
+  async function teamReactions(input) {
+    const ids = z.array(z.uuid()).min(1).max(100).parse(input);
+    const rows = await query(`SELECT r.message_id, r.member_id, r.emoji FROM team_reactions r
+      JOIN (SELECT message_id, member_id, MAX(sequence) AS latest FROM team_reactions
+      WHERE message_id IN (${ids.map(() => '?').join(',')}) GROUP BY message_id, member_id) last_reaction
+      ON r.sequence = last_reaction.latest`, ids);
+    return rows.filter(r => r.emoji);
   }
   async function restoreContext(projectId, version, input, actor) {
     const row = await contextRow(projectId);
@@ -683,5 +723,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), ...createCompany({ query, members, AppError }), subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { reactTeamMessage, teamReactionRevision, teamReactions, saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), ...createCompany({ query, members, AppError }), onEvent, subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }

@@ -54,7 +54,7 @@ function versionAssets(dir) {
 /** Avatares só para quem entrou: o navegador guarda, a CDN não. */
 const privateCache = (res) => res.setHeader('Cache-Control', 'private, max-age=604800');
 
-export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits } = {}) {
+export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits, push = null } = {}) {
   const uploadRoot = resolve(uploads);
   const presence = new Map();
   const app = express();
@@ -149,6 +149,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     next();
   });
 
+  // Avisos fora do site (Web Push).
+  const needPush = () => { if (!push) throw new AppError(503, 'Avisos fora do site não estão ligados neste servidor.'); return push; };
+  app.get('/api/push/key', async (_req, res) => res.json({ publicKey: (await needPush().keys()).publicKey }));
+  app.post('/api/push/subscriptions', async (req, res) => { await needPush().subscribe(req.actor.id, req.body?.subscription); res.status(201).json({ ok: true }); });
+  app.delete('/api/push/subscriptions', async (req, res) => { await needPush().unsubscribe(req.actor.id, req.body?.endpoint); res.json({ ok: true }); });
   app.post('/api/team/images', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
     const type = IMAGE_TYPES[req.get('content-type')];
     if (!type || !Buffer.isBuffer(req.body) || !type.magic(req.body)) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF válida.');
@@ -170,6 +175,8 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
     res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=604800' }).send(bytes);
   });
+  app.get('/api/team/reactions', async (req, res) => res.json(await store.teamReactions(String(req.query.ids || '').split(','))));
+  app.post('/api/team/messages/:id/reaction', async (req, res) => res.json(await store.reactTeamMessage(req.params.id, req.body, req.actor)));
   app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
   app.get('/api/team/messages/stream', async (req, res) => {
     const cursor = req.get('Last-Event-ID') ?? req.query.after ?? '0';
@@ -178,6 +185,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
       'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 1000\n\n');
+    let reactionRevision = -1;
     let closed = false, draining = false, queued = false, heartbeat = 0;
     const stop = () => { closed = true; clearInterval(timer); unsubscribe(); };
     const drain = async () => {
@@ -189,6 +197,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
           queued = false;
           // A autorização continua valendo durante a conexão, não só na abertura.
           if (!(await store.identity(credential(req), 'Web'))) { res.end(); stop(); return; }
+          const revision = await store.teamReactionRevision();
+          if (reactionRevision !== revision) {
+            reactionRevision = revision;
+            res.write(`event: reactions-changed\ndata: ${revision}\n\n`);
+          }
           const page = await store.teamMessages({ after, limit: 100 });
           if (closed) return;
           if (page.messages.length) {

@@ -31,7 +31,7 @@ let restoreFocus;
 let boardTag;
 let boardRevision = 0;
 let pendingWrites = 0;
-const teamChat = setupTeamChat({ request, onExpired: endBoardSession, getCards: () => [...(board?.cards || []), ...(board?.archive || [])], onCard: id => { const card = cardById(id); if (card) showCard(card); else message('Cartão não encontrado. Atualize o quadro.'); } });
+const teamChat = setupTeamChat({ request, onExpired: endBoardSession, getMembers: () => board?.members || [], getCards: () => [...(board?.cards || []), ...(board?.archive || [])], onCard: id => { const card = cardById(id); if (card) showCard(card); else message('Cartão não encontrado. Atualize o quadro.'); } });
 
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -314,6 +314,11 @@ let companyStarted = false;
 function renderShell() {
   teamChat.setUser(board.user);
   if (!companyStarted) { companyStarted = true; void company.start(); }
+  if (!pushStarted) {
+    pushStarted = true;
+    void syncPush().catch(() => {});
+    setTimeout(() => openIntent(location.href), 0);
+  }
   const profileWasOpen = root.querySelector('.profile-dock')?.dataset.open === 'true';
   const profileAvatar = avatarFor(board.user.name);
   root.className = 'wrap';
@@ -2014,8 +2019,9 @@ document.addEventListener('click', async (event) => {
       dismissBubble(control.closest('.bubble'));
     } else if (action === 'notify-ask') {
       await Notification.requestPermission();
+      const pushed = await syncPush().catch(() => false);
       root.querySelector('.notify-pref').innerHTML = notifyPrefButton();
-      if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
+      if (Notification.permission === 'granted') message(pushed ? 'Pronto: mensagens do chat e dos seus cartões chegam neste aparelho, mesmo com o site fechado.' : 'Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
     } else if (action === 'context-edit') {
       await editContext(control.dataset.focus);
     } else if (action === 'edit-step') {
@@ -2101,6 +2107,7 @@ document.addEventListener('click', async (event) => {
       control.closest('.check-row').remove();
       dialog.querySelector('[data-action=add-check]').focus();
     } else if (action === 'logout') {
+      await dropPush();
       await request('/logout', 'POST', {});
       stopBoardSync();
       view = 'board'; projectId = ''; search = ''; blockedOnly = false;
@@ -2344,11 +2351,48 @@ let unread = 0;
 const baseTitle = document.title;
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/* ---------- Avisos fora do site (Web Push) ---------- */
+let pushStarted = false;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const keyBytes = (base64) => Uint8Array.from(atob((base64 + '='.repeat((4 - base64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0));
+
+/** Liga o aparelho aos avisos da pessoa logada. Sem permissão, não faz nada (o botão do perfil pede). */
+async function syncPush() {
+  if (!pushSupported() || Notification.permission !== 'granted') return false;
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    const { publicKey } = await request('/push/key');
+    subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+  }
+  // Sempre regrava: num aparelho compartilhado, o aviso passa a ser de quem entrou agora.
+  await request('/push/subscriptions', 'POST', { subscription: subscription.toJSON() });
+  return true;
+}
+
+async function dropPush() {
+  if (!pushSupported()) return;
+  const subscription = await (await navigator.serviceWorker.getRegistration('/sw.js'))?.pushManager.getSubscription();
+  if (subscription) await request('/push/subscriptions', 'DELETE', { endpoint: subscription.endpoint }).catch(() => {});
+}
+
+/** Abre o que o aviso pediu: ?chat=1 abre o chat da equipe; ?card=ID abre a conversa do cartão. */
+function openIntent(href) {
+  const params = new URL(href, location.origin).searchParams;
+  if (params.get('chat')) teamChat.open();
+  else if (params.get('card')) openFromNotice(params.get('card'));
+  if (params.has('chat') || params.has('card')) history.replaceState(null, '', '/');
+}
+navigator.serviceWorker?.addEventListener('message', (event) => {
+  if (event.data?.type === 'gavyo-open' && board) openIntent(event.data.url);
+});
+
 function notifyPrefButton() {
   if (!('Notification' in window)) return '<p class="notify-note">Este navegador não mostra avisos fora da aba.</p>';
-  if (Notification.permission === 'granted') return `<p class="notify-note is-on">${icon('bell-ring')}Avisos fora da aba ligados</p>`;
+  if (Notification.permission === 'granted') return `<p class="notify-note is-on">${icon('bell-ring')}${pushSupported() ? 'Avisos ligados, mesmo com o site fechado' : 'Avisos fora da aba ligados'}</p>`;
   if (Notification.permission === 'denied') return '<p class="notify-note">Avisos bloqueados no navegador. Libere nas configurações do site.</p>';
-  return button('Avisar quando eu estiver em outra aba', 'notify-ask', 'bell', 'ghost notify-ask');
+  return button(pushSupported() ? 'Receber avisos mesmo com o site fechado' : 'Avisar quando eu estiver em outra aba', 'notify-ask', 'bell', 'ghost notify-ask');
 }
 
 /** O que mudou para mim entre duas leituras do quadro. */
@@ -2399,6 +2443,7 @@ function openFromNotice(cardId) {
   if (!card) return;
   showCard(card);
   setTaskSection('conversation');
+  dialog.querySelector('[name=comment]')?.focus({ preventScroll: true });
 }
 
 function notify(news) {
@@ -2486,6 +2531,7 @@ function stopBoardSync() {
   teamChat.setUser(null);
   companyStarted = false;
   company.signOut();
+  pushStarted = false;
   clearTimeout(autoTimer);
   clearTimeout(presenceTimer);
   online = [];

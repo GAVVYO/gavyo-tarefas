@@ -2248,3 +2248,40 @@ html.note-to-edge::after{content:'Levar comigo';position:fixed;z-index:69;top:0;
   .cash-grid{grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce){.cash-perch,.hawk-eyes i{animation:none}}
+.team-chat-form .team-chat-composer{display:flex;flex-wrap:nowrap;align-items:flex-end;gap:6px;padding:6px;background:var(--well);border:1px solid var(--control-line);border-radius:var(--radius-control)}
+.team-chat-composer:focus-within{border-color:var(--accent)}
+.team-chat-form .team-chat-composer textarea{flex:1;min-width:0;min-height:64px;padding:8px 2px;border:0;background:transparent;box-shadow:none;outline:none}
+.team-chat-composer .team-chat-upload,.team-chat-composer .team-chat-send{display:grid;place-items:center;flex:none;width:36px;height:36px;min-height:36px;margin:0;padding:0;border-radius:var(--radius-control);font-size:24px;line-height:1;cursor:pointer}
+.team-chat-composer .team-chat-upload{background:transparent;border:0;color:var(--muted)}
+.team-chat-composer .team-chat-upload:hover{background:var(--hover);color:var(--ink)}
+.team-chat-composer .team-chat-send{font-size:22px}
+
+/* Uma linha alinhada aos controles; linhas novas ampliam o campo para cima. */
+.team-chat-form .team-chat-composer{gap:8px;padding:6px}
+.team-chat-form .team-chat-composer textarea{height:44px;min-height:44px;max-height:none;line-height:24px;padding:10px 2px;overflow-y:hidden;resize:none}
+.team-chat-composer .team-chat-upload,.team-chat-composer .team-chat-send{margin-block:4px}
+.chat-message-actions{display:flex;gap:4px;opacity:0;transition:opacity .15s;margin-top:4px}.team-chat-message:hover .chat-message-actions,.team-chat-message:focus-within .chat-message-actions{opacity:1}.chat-message-actions .btn{padding:3px 7px;min-height:28px;background:transparent;color:var(--muted);font-size:.8rem;border:0}
+.chat-reactions{display:flex;gap:5px;flex-wrap:wrap}.chat-reaction.btn{padding:3px 8px;min-height:28px;font-size:.85rem;border-radius:16px}.chat-reaction[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.chat-quote,.chat-reply-draft{border:0;border-left:3px solid var(--accent);border-radius:4px;background:var(--well);color:var(--muted);padding:8px 10px;font:inherit;text-align:left;max-width:100%;overflow:hidden}.chat-quote{display:block;margin-top:8px;font-size:.85rem;white-space:nowrap;text-overflow:ellipsis;cursor:pointer}
+.chat-reply-draft:not([hidden]){display:flex;justify-content:space-between;align-items:center;gap:8px}.chat-reply-draft>div{min-width:0;display:grid;gap:3px}.chat-reply-draft strong{color:var(--accent);font-size:.85rem}.chat-reply-draft span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:.85rem}.chat-reply-draft .btn{flex:none}
+.team-chat-form{position:relative}.team-chat-form .chat-suggestions:not([hidden]){position:absolute;bottom:calc(100% + 8px);left:16px;right:16px;display:flex;flex-wrap:wrap;justify-content:flex-start;gap:4px;max-height:180px;overflow:auto;padding:8px;background:var(--surface);border:1px solid var(--control-line);border-radius:var(--radius-control);box-shadow:var(--shadow);z-index:3}.chat-suggestions .chat-emoji{font-size:23px;padding:6px;min-width:38px}.chat-suggestions .chat-person{width:100%;text-align:left;justify-content:flex-start;background:transparent;border:0}
+.chat-mentions{color:var(--accent);font-size:.85rem;margin-top:4px}.team-chat-message.chat-mentioned{background:var(--accent-soft)}.team-chat-message.chat-highlight{outline:2px solid var(--accent);outline-offset:-2px}
+.team-chat-composer .chat-emoji-toggle{flex:none;width:32px;height:36px;min-height:36px;margin-block:4px;padding:0;background:transparent;border:0;color:var(--muted);font-size:23px}.team-chat-composer .chat-emoji-toggle:hover{color:var(--ink);background:var(--hover)}
+@media(hover:none){.chat-message-actions{opacity:1}}
+
+@font-face{font-family:'Gavyo Color Emoji';src:url('/chat-emoji.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+.team-chat,.team-chat button,.team-chat input,.team-chat textarea{font-family:Manrope,'Gavyo Color Emoji','Apple Color Emoji','Segoe UI Emoji',sans-serif}
+
+
+.team-chat-form .chat-suggestions:has(.chat-emoji-picker){display:block;padding:0;max-height:none;overflow:hidden}
+.chat-emoji-picker{padding:12px;display:grid;gap:9px}
+.chat-emoji-head{display:flex;align-items:center;justify-content:space-between}.chat-emoji-head strong{font-size:.94rem}.chat-emoji-head .btn{padding:0;width:28px;min-height:28px;border:0;font-size:22px}
+.chat-emoji-picker input{width:100%;padding:9px 11px;border:1px solid var(--control-line);border-radius:var(--radius-control);background:var(--well);color:var(--ink);font-size:16px}
+.chat-emoji-categories{display:flex;justify-content:space-between;gap:2px;border-bottom:1px solid var(--line);padding-bottom:6px;overflow-x:auto}
+.chat-emoji-category,.chat-emoji-choice{font-family:'Gavyo Color Emoji','Apple Color Emoji','Segoe UI Emoji',sans-serif;background:transparent;border:0;cursor:pointer;border-radius:6px;display:grid;place-items:center;padding:0;color:var(--ink)}
+.chat-emoji-category{font-size:19px;min-width:30px;height:34px}.chat-emoji-category[aria-pressed=true]{background:var(--accent-soft);box-shadow:inset 0 -2px var(--accent)}
+.chat-emoji-caption{font-size:.8rem;color:var(--muted);margin:0}
+.chat-emoji-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:3px;max-height:min(230px,30dvh);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;align-content:start}
+.chat-emoji-choice{font-size:26px;min-height:40px}.chat-emoji-choice:hover,.chat-emoji-category:hover{background:var(--hover)}.chat-emoji-choice:focus-visible,.chat-emoji-category:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.chat-emoji-grid>p{grid-column:1/-1;font-size:.88rem;padding:12px}
+@media(max-width:400px){.chat-emoji-picker{padding:9px;gap:7px}.chat-emoji-category{min-width:26px;font-size:17px}.chat-emoji-grid{grid-template-columns:repeat(auto-fill,minmax(34px,1fr))}.chat-emoji-choice{font-size:24px;min-height:38px}}

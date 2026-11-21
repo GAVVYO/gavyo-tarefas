@@ -46,10 +46,17 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
   for (const definition of definitions) await query(`CREATE TABLE IF NOT EXISTS ${definition}`);
   // Tela Empresa: notas, agenda e caixa, um documento JSON por item.
   await query('CREATE TABLE IF NOT EXISTS company_items (id VARCHAR(36) PRIMARY KEY, kind VARCHAR(10) NOT NULL, version INTEGER NOT NULL, data MEDIUMTEXT NOT NULL)');
+  // Avisos fora do site: um registro por aparelho autorizado e as chaves de envio.
+  await query('CREATE TABLE IF NOT EXISTS push_subscriptions (id VARCHAR(64) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))');
+  await query('CREATE TABLE IF NOT EXISTS push_keys (id INTEGER PRIMARY KEY, public_key VARCHAR(200) NOT NULL, private_key VARCHAR(200) NOT NULL)');
   // Sequência do banco evita perder mensagens enviadas no mesmo milissegundo.
   await query(`CREATE TABLE IF NOT EXISTS team_messages (
     sequence ${url ? 'BIGINT PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
     id VARCHAR(36) UNIQUE NOT NULL, member_id VARCHAR(36) NOT NULL,
     data MEDIUMTEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))`);
+  await query(`CREATE TABLE IF NOT EXISTS team_reactions (
+    sequence ${url ? 'BIGINT PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+    message_id VARCHAR(36) NOT NULL, member_id VARCHAR(36) NOT NULL, emoji VARCHAR(16) NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES team_messages(id), FOREIGN KEY (member_id) REFERENCES members(id))`);
   return { query, close };
 }
