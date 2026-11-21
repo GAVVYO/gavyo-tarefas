@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { AppError, newCard, patchCard, projectInput } from './store.js';
-import { recentCommits } from './github.js';
+import { mergeGithubActivity, recentCommits } from './github.js';
 
 export async function serveMcp(req, res, store, actor) {
   const server = new McpServer({ name: 'gavyo-tarefas', version: '1.0.0' });
@@ -55,9 +55,8 @@ export async function serveMcp(req, res, store, actor) {
     { projectId: z.uuid() }, true, async ({ projectId }) => {
       const ctx = await store.projectContext(projectId);
       const [github, pushed] = await Promise.all([recentCommits(ctx.repositorio, ctx.branch), store.githubEvents(ctx.repositorio, ctx.branch)]);
-      const seen = new Set(pushed.map((item) => item.id));
-      const items = [...pushed, ...github.commits.map((item) => ({ kind: 'commit', id: `commit:${item.sha}`, ...item })).filter((item) => !seen.has(item.id))];
-      return { repositorio: ctx.repositorio, aviso: github.note || undefined, itens: items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 60) };
+      const items = mergeGithubActivity(pushed, github.commits).slice(0, 60);
+      return { repositorio: ctx.repositorio, aviso: github.note || undefined, itens: items };
     });
   add('voltar_versao_contexto', 'Volta o contexto do projeto para uma versão anterior (vira uma versão nova). Exige versaoLida, como atualizar_contexto_projeto.',
     { projectId: z.uuid(), version: z.number().int().min(1), versaoLida: z.number().int().min(0) },

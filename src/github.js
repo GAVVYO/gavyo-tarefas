@@ -42,3 +42,12 @@ export async function recentCommits(repository, branch = '') {
   cache.set(key, { at: Date.now(), value });
   return value;
 }
+
+export function mergeGithubActivity(pushed, commits) {
+  const seen = new Set(pushed.map((item) => item.id));
+  const fetched = commits.map((item) => ({ kind: 'commit', id: `commit:${item.sha}`, ...item }))
+    .filter((item) => !seen.has(item.id));
+  return [...pushed, ...fetched]
+    .filter((item) => Number.isFinite(Date.parse(item.at)))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
