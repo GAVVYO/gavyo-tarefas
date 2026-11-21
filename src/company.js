@@ -82,5 +82,41 @@ export function createCompany({ query, members, AppError }) {
     if (result.affectedRows !== 1) throw new AppError(404, 'Item não encontrado.');
   }
 
-  return { companyItems, addCompanyItem, updateCompanyItem, removeCompanyItem };
+  /**
+   * Copia os gastos do financeiro antigo (por projeto) para o Caixa, uma vez. Não apaga nada do antigo.
+   * Cada gasto vira um lançamento de saída com o mesmo id: rodar de novo não duplica.
+   */
+  async function migrateFinanceToCash() {
+    const rows = await query('SELECT project_id, data FROM project_finance ORDER BY project_id, revision');
+    const removed = new Set();
+    const categories = new Map();
+    const expenses = [];
+    for (const row of rows) {
+      const entry = JSON.parse(row.data);
+      if (entry.kind === 'expense_deleted') removed.add(entry.expenseId);
+      else if (entry.kind === 'category') categories.set(entry.id, entry.name);
+      else if (entry.kind === 'expense') expenses.push({ ...entry, projectId: row.project_id });
+    }
+    let copied = 0;
+    for (const expense of expenses) {
+      if (removed.has(expense.id) || removed.has(expense.occurrence?.expenseId)) continue;
+      const [exists] = await query('SELECT id FROM company_items WHERE id = ?', [expense.id]);
+      if (exists) continue;
+      const item = {
+        id: expense.id, kind: 'cash', type: 'out', amountCents: expense.amountCents, day: expense.paidOn,
+        description: expense.description, ownerId: expense.payerId ?? null, category: categories.get(expense.categoryId) || '',
+        projectId: expense.projectId, author: { id: expense.actorId ?? null, name: expense.actor || 'Equipe' },
+        at: expense.at, updatedAt: expense.at, updatedBy: expense.actor || 'Equipe', migratedFrom: 'financeiro'
+      };
+      try {
+        await query('INSERT INTO company_items (id, kind, version, data) VALUES (?, ?, 1, ?)', [item.id, 'cash', JSON.stringify(item)]);
+        copied++;
+      } catch (error) {
+        if (!(error.code === 'ER_DUP_ENTRY' || /UNIQUE constraint failed/.test(error.message))) throw error;
+      }
+    }
+    return copied;
+  }
+
+  return { companyItems, addCompanyItem, updateCompanyItem, removeCompanyItem, migrateFinanceToCash };
 }

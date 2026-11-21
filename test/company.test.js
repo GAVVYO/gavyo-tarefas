@@ -35,3 +35,19 @@ test('agenda e caixa validam campos; tipo desconhecido é recusado', async (t) =
   await store.removeCompanyItem('cash', cash.id);
   assert.equal((await store.companyItems('cash')).length, 0);
 });
+
+test('migração copia gastos ativos do financeiro para o Caixa, uma vez só', async (t) => {
+  const { store, actor, ana } = await setup(t);
+  const project = await store.createProject({ name: 'Loja' });
+  const category = await store.addFinanceCategory(project.id, { name: 'Hospedagem' }, actor);
+  const kept = await store.addExpense(project.id, { description: 'Servidor', amountCents: 5990, paidOn: '2026-11-10', payerId: ana.id, participantIds: [ana.id], categoryId: category.id }, actor);
+  const gone = await store.addExpense(project.id, { description: 'Errado', amountCents: 100, paidOn: '2026-11-11', payerId: ana.id, participantIds: [ana.id] }, actor);
+  const { version } = await store.projectFinance(project.id);
+  await store.deleteExpense(project.id, gone.id, { version }, actor);
+  assert.equal(await store.migrateFinanceToCash(), 1);
+  assert.equal(await store.migrateFinanceToCash(), 0);
+  const [cash] = await store.companyItems('cash');
+  assert.equal(cash.id, kept.id);
+  assert.deepEqual([cash.type, cash.amountCents, cash.day, cash.category, cash.ownerId, cash.projectId, cash.author.name], ['out', 5990, '2026-11-10', 'Hospedagem', ana.id, project.id, 'Ana']);
+  assert.equal((await store.projectFinance(project.id)).expenses.length, 1);
+});

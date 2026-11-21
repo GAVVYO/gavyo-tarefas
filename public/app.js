@@ -2,7 +2,6 @@ import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
 import { setupTeamChat } from './team-chat.js';
-import { setupProjectFinance } from './project-finance.js';
 import { setupCompany } from './company.js';
 
 const root = document.querySelector('#root');
@@ -568,7 +567,8 @@ let hubCite = null;
 let hubPicking = false;
 let hubTimer = 0;
 let hubPainted = '';
-const HUB_SECTORS = [['atividade', 'Atividade', 'git-commit-horizontal'], ['contexto', 'Contexto', 'book-open'], ['financeiro', 'Financeiro', 'wallet']];
+const HUB_SECTORS = [['atividade', 'Atividade', 'git-commit-horizontal'], ['contexto', 'Contexto', 'book-open']];
+// O dinheiro da empresa agora fica no Caixa da tela Empresa (os gastos antigos foram copiados para lá).
 
 /** Quem mexeu, por qual canal, quando e qual versão leu. */
 function signature(by, compact = false) {
@@ -588,8 +588,7 @@ function nextStep(id) {
 
 function hostOf(url) { return url.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 
-const company = setupCompany({ request, escape, face, icon, message, onExpired: endBoardSession });
-const projectFinance = setupProjectFinance({ request, escape, openDialog, dialog, icon, message, onExpired: endBoardSession });
+const company = setupCompany({ request, escape, face, icon, message, onExpired: endBoardSession, getBoard: () => board });
 
 /* ---------- Central de projetos ---------- */
 function renderHub(content) {
@@ -622,7 +621,6 @@ function renderHub(content) {
   panel.setAttribute('aria-labelledby', `hub-tab-${hubSector}`);
   if (hubSector !== 'atividade') clearTimeout(hubTimer);
   if (hubSector === 'contexto') { if (!contextEditing) void renderContext(panel); return; }
-  if (hubSector === 'financeiro') { projectFinance.render(panel, id, board); return; }
   if (!panel.querySelector('.hub-activity')) {
     panel.innerHTML = `<div class="hub-activity">
       <section class="hub-tree" aria-labelledby="hub-tree-title">
