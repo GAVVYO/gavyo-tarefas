@@ -295,27 +295,83 @@ export function createStore({ query }) {
     return { previous: current, saved: next };
   }
 
-  /** Contexto do projeto: seções em texto e links; guarda quem mexeu por último e por qual canal. */
+  /**
+   * Contexto do projeto: seções em texto, links, responsável e ambientes.
+   * Cada gravação vira uma versão com autor, canal, hora e a versão que a pessoa
+   * (ou a IA) leu antes. Se alguém salvou no meio-tempo, a gravação é recusada.
+   */
   const CONTEXT_SECTIONS = ['resumo', 'objetivo', 'regras', 'stack', 'decisoes'];
+  const httpUrl = z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.');
   const contextInput = z.object({
     ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, z.string().max(12000).optional()])),
-    links: z.array(z.object({ title: z.string().trim().min(1).max(120), url: z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.') })).max(30).optional()
+    links: z.array(z.object({ title: z.string().trim().min(1).max(120), url: httpUrl })).max(30).optional(),
+    responsavelId: z.uuid().nullable().optional(),
+    producao: z.union([httpUrl, z.literal('')]).optional(),
+    teste: z.union([httpUrl, z.literal('')]).optional(),
+    repositorio: z.string().trim().max(200).optional(),
+    branch: z.string().trim().max(120).optional()
   });
-  async function projectContext(projectId) {
+  const CONTEXT_FIELDS = [...CONTEXT_SECTIONS, 'links', 'responsavelId', 'producao', 'teste', 'repositorio', 'branch'];
+  const readVersion = z.coerce.number().int().min(0, 'Informe a versão do contexto que você leu (campo versaoLida).');
+
+  async function contextRow(projectId) {
     if (!(await project(projectId))) throw new AppError(404, 'Projeto não encontrado.');
-    const row = await first('SELECT data FROM project_context WHERE project_id = ?', [projectId]);
-    const empty = { ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, ''])), links: [], updated: null };
+    return first('SELECT data FROM project_context WHERE project_id = ?', [projectId]);
+  }
+  function contextOf(row) {
+    const empty = { ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, ''])), links: [], responsavelId: null,
+      producao: '', teste: '', repositorio: '', branch: '', version: 0, updated: null, sectionBy: {} };
     return { ...empty, ...(row ? JSON.parse(row.data) : {}) };
   }
-  async function setProjectContext(projectId, input, actor) {
-    const current = await projectContext(projectId);
-    const patch = contextInput.parse(input);
-    const next = { ...current, ...patch, updated: event(actor, 'Editou o contexto') };
+  async function projectContext(projectId) {
+    return contextOf(await contextRow(projectId));
+  }
+  async function logContext(projectId, entry) {
+    await query('INSERT INTO context_history (id, project_id, at, data) VALUES (?, ?, ?, ?)',
+      [randomUUID(), projectId, Date.now(), JSON.stringify(entry)]);
+  }
+  async function writeContext(projectId, row, current, patch, actor, read, action) {
+    const by = event(actor, action);
+    const changed = CONTEXT_FIELDS.filter((key) => key in patch && JSON.stringify(patch[key]) !== JSON.stringify(current[key]));
+    if (read !== current.version) {
+      await logContext(projectId, { kind: 'recusado', by, readVersion: read, version: current.version, changed });
+      throw new AppError(409, `O contexto mudou: agora está na versão ${current.version} e você leu a ${read}. Leia de novo (ver_contexto_projeto) antes de editar.`);
+    }
+    if (!changed.length) return current;
+    if (patch.responsavelId) await validateAssignee(patch.responsavelId);
+    const sectionBy = { ...current.sectionBy };
+    for (const key of changed) sectionBy[key] = { ...by, readVersion: read };
+    const next = { ...current, ...patch, version: current.version + 1, updated: { ...by, readVersion: read }, sectionBy };
     const data = JSON.stringify(next);
-    const saved = await query('UPDATE project_context SET data = ? WHERE project_id = ?', [data, projectId]);
-    if (!saved.affectedRows) await query('INSERT INTO project_context (project_id, data) VALUES (?, ?)', [projectId, data]);
+    const saved = row
+      ? await query('UPDATE project_context SET data = ? WHERE project_id = ? AND data = ?', [data, projectId, row.data])
+      : await query('INSERT INTO project_context (project_id, data) VALUES (?, ?)', [projectId, data]).catch(() => ({ affectedRows: 0 }));
+    if (!saved.affectedRows) throw new AppError(409, 'O contexto mudou agora mesmo. Leia de novo antes de editar.');
+    await logContext(projectId, { kind: 'versao', by, readVersion: read, version: next.version, changed, snapshot: next });
     return next;
   }
+  async function setProjectContext(projectId, input, actor) {
+    const row = await contextRow(projectId);
+    const current = contextOf(row);
+    const { versaoLida, ...rest } = input || {};
+    const read = readVersion.parse(versaoLida ?? (current.version === 0 ? 0 : undefined));
+    return writeContext(projectId, row, current, contextInput.parse(rest), actor, read, 'Editou o contexto');
+  }
+  async function contextHistory(projectId) {
+    await contextRow(projectId);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ? ORDER BY at DESC LIMIT 200', [projectId]);
+    return rows.map((row) => JSON.parse(row.data));
+  }
+  async function restoreContext(projectId, version, input, actor) {
+    const row = await contextRow(projectId);
+    const current = contextOf(row);
+    const read = readVersion.parse(input?.versaoLida);
+    const rows = await query('SELECT data FROM context_history WHERE project_id = ?', [projectId]);
+    const target = rows.map((r) => JSON.parse(r.data)).find((entry) => entry.kind === 'versao' && entry.version === version);
+    if (!target) throw new AppError(404, 'Versão não encontrada.');
+    const patch = Object.fromEntries(CONTEXT_FIELDS.map((key) => [key, target.snapshot[key] ?? current[key]]));
+    return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
+  }
 
-  return { projectContext, setProjectContext, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

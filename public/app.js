@@ -455,50 +455,136 @@ function contextBlock(text) {
   return text.trim().split(/\n{2,}/).map((part) => `<p>${linkify(part)}</p>`).join('');
 }
 
+const CONTEXT_LABELS = { resumo: 'O que é', objetivo: 'No que estamos agora', regras: 'Como trabalhamos', decisoes: 'Decisões', stack: 'Stack',
+  links: 'Links', responsavelId: 'Responsável', producao: 'Produção', teste: 'Teste', repositorio: 'Repositório', branch: 'Branch' };
+let contextView = 'page';
+let contextCache = null;
+
+/** Quem mexeu, por qual canal, quando e qual versão leu. */
+function signature(by, compact = false) {
+  if (!by) return '';
+  const agent = AGENTS.includes(by.source);
+  const read = by.readVersion > 0 ? ` · leu a v${by.readVersion}` : '';
+  return `<span class="ctx-sign${agent ? ' is-agent' : ''}">${compact ? '' : face(memberNamed(by.actor), 'card-face')}<b>${escape(by.actor)}</b>
+    <span>${agent ? `${by.source} · ` : ''}${when(by.at)}${read}</span></span>`;
+}
+
+/** O próximo passo sai dos cartões: travado em andamento, urgente, em andamento, a fazer. */
+function nextStep(id) {
+  const open = board.cards.filter((card) => card.projectId === id && card.status !== 'done');
+  const rank = (card) => (card.blocked && card.status === 'doing' ? 0 : card.priority === 'high' ? 1 : card.status === 'doing' ? 2 : 3);
+  return open.sort((x, y) => rank(x) - rank(y) || (x.due || '9').localeCompare(y.due || '9'))[0];
+}
+
+function hostOf(url) { return url.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
+
 async function renderContext(content) {
   const id = projectId;
   if (!id) { content.innerHTML = '<p class="empty">Crie um projeto para escrever o contexto.</p>'; return; }
   if (!content.querySelector('.ctx')) content.innerHTML = '<div class="ctx ctx-loading" aria-busy="true"></div>';
-  const ctx = await request(`/projects/${id}/context`).catch((error) => { message(error.message); return null; });
+  const [ctx, history] = await Promise.all([
+    request(`/projects/${id}/context`), request(`/projects/${id}/context/history`)
+  ]).catch((error) => { message(error.message); return []; });
   if (!ctx || view !== 'context' || id !== projectId || contextEditing) return;
-  const who = ctx.updated && memberNamed(ctx.updated.actor);
-  const instruction = `Antes de começar qualquer tarefa do projeto ${board.projects.find((item) => item.id === id)?.name}, use o MCP gavyo-tarefas: chame ver_contexto_projeto com projectId ${id} e siga as regras de lá.`;
+  contextCache = { id, ctx, history };
+  if (contextView === 'history') { renderContextHistory(content); return; }
+  const project = board.projects.find((item) => item.id === id);
+  const all = board.cards.filter((card) => card.projectId === id);
+  const step = nextStep(id);
+  const owner = board.members.find((member) => member.id === ctx.responsavelId);
+  const instruction = `Antes de começar qualquer tarefa do projeto ${project?.name}, use o MCP gavyo-tarefas: chame ver_contexto_projeto com projectId ${id}, siga as regras de lá e, ao editar o contexto, mande versaoLida com o version que você leu.`;
+  const tile = (label, body, foot = '', focus = '') => `<div class="ctx-tile">
+    <span class="ctx-tile-label">${label}</span>${body || `<button type="button" class="ctx-tile-empty" data-action="context-edit" data-focus="${focus}">${icon('plus')}Definir</button>`}${foot}</div>`;
+  const section = (key, title, hint, glyph) => `<section class="ctx-card" data-part="${key}">
+    <header class="ctx-card-head"><h2><span class="ctx-icon">${icon(glyph)}</span>${title}</h2>${signature(ctx.sectionBy?.[key], true)}</header>
+    ${ctx[key]?.trim() ? `<div class="ctx-text">${contextBlock(ctx[key])}</div>`
+      : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="${key}">${icon('plus')}${hint}</button>`}
+  </section>`;
+  const changes = history.slice(0, 5).map((entry) => `<li class="ctx-change" data-kind="${entry.kind}">${signature(entry.by)}
+    <small>${entry.kind === 'recusado' ? `Recusado: leu a v${entry.readVersion}, já era a v${entry.version}` : `v${entry.version} · ${entry.changed.map((key) => CONTEXT_LABELS[key]).join(', ') || entry.by.action}`}</small></li>`).join('');
   content.innerHTML = `<div class="ctx" data-project="${id}">
-    <div class="ctx-bar">
-      <p class="ctx-updated">${ctx.updated ? `${face(who, 'card-face')}<span><b>${escape(ctx.updated.actor)}</b> mexeu ${when(ctx.updated.at)}${AGENTS.includes(ctx.updated.source) ? ` pelo ${ctx.updated.source}` : ''}</span>` : '<span>Ninguém escreveu o contexto ainda.</span>'}</p>
-      ${button('Editar contexto', 'context-edit', 'pencil', 'primary')}
-    </div>
-    <div class="ctx-grid">
-      <div class="ctx-main">
-        ${CONTEXT_PARTS.map(([key, title, hint, glyph], index) => `<section class="ctx-card" data-part="${key}">
-          <h2><span class="ctx-icon">${icon(glyph)}</span>${title}</h2>
-          ${ctx[key]?.trim() ? `<div class="ctx-text">${contextBlock(ctx[key])}</div>`
-            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="${key}">${icon('plus')}${hint}</button>`}
-        </section>`).join('')}
+    <header class="ctx-hero">
+      <div class="ctx-hero-text">
+        ${ctx.resumo?.trim() ? `<p>${linkify(ctx.resumo.trim().split(/\n{2,}/)[0])}</p>` : ''}
       </div>
+      <div class="ctx-hero-actions">
+        ${button(`Histórico${ctx.version ? ` · v${ctx.version}` : ''}`, 'context-history', 'history', 'ghost')}
+        ${button('Editar contexto', 'context-edit', 'pencil', 'primary')}
+      </div>
+    </header>
+    <section class="ctx-tiles" aria-label="Responsável e ambientes">
+      ${tile('Responsável', owner ? `<span class="ctx-owner">${face(owner, 'card-face')}<strong>${escape(owner.name)}</strong></span>` : '', '', 'responsavelId')}
+      ${tile('Produção', ctx.producao ? `<a class="ctx-tile-link" href="${escape(ctx.producao)}" target="_blank" rel="noopener noreferrer">${escape(hostOf(ctx.producao))}${icon('external-link')}</a>` : '', ctx.producao ? '<small class="ctx-live">no ar</small>' : '', 'producao')}
+      ${tile('Teste', ctx.teste ? `<a class="ctx-tile-link" href="${escape(ctx.teste)}" target="_blank" rel="noopener noreferrer">${escape(hostOf(ctx.teste))}${icon('external-link')}</a>` : '', '', 'teste')}
+      ${tile('Código', ctx.repositorio ? `<strong class="ctx-repo">${escape(ctx.repositorio)}</strong>` : '', ctx.branch ? `<small>branch ${escape(ctx.branch)}</small>` : '', 'repositorio')}
+    </section>
+    ${step ? `<button type="button" class="ctx-next" data-action="edit" data-card="${step.id}">
+      <span class="ctx-next-text"><span class="ctx-kicker">Próximo passo · vem dos cartões</span>
+      <strong>${escape(step.key || '')} · ${escape(step.title)}</strong>
+      <small>${escape(board.members.find((member) => member.id === step.assigneeId)?.name || 'Sem responsável')}${step.blocked ? ` · Travado: ${escape(step.blocked)}` : step.status === 'doing' ? ' · em andamento' : ''}</small></span>
+      <small class="ctx-next-count">${all.length} cartões · ${all.filter((card) => card.status === 'done').length} concluídos · ${all.filter((card) => card.blocked).length} travado${all.filter((card) => card.blocked).length === 1 ? '' : 's'}</small>
+    </button>` : ''}
+    <div class="ctx-grid">
+      <div class="ctx-main">${CONTEXT_PARTS.filter(([key]) => key !== 'resumo').map(([key, title, hint, glyph]) => section(key, title, hint, glyph)).join('')}
+        ${ctx.resumo?.trim() ? '' : section('resumo', 'O que é', CONTEXT_PARTS[0][2], 'compass')}</div>
       <aside class="ctx-side">
+        ${changes ? `<section class="ctx-card ctx-changes"><header class="ctx-card-head"><h2><span class="ctx-icon">${icon('history')}</span>Últimas mudanças</h2>
+          <button type="button" class="ctx-more" data-action="context-history">Ver tudo</button></header><ul>${changes}</ul></section>` : ''}
         <section class="ctx-card ctx-agents">
           <h2><span class="ctx-icon">${icon('bot')}</span>Para os assistentes</h2>
-          <p>O Claude e o Codex leem esta página pelo MCP antes de começar. Cole isto no começo da conversa:</p>
+          <p>Claude e Codex leem esta página pelo MCP. Para editar, precisam dizer qual versão leram; se estiver velha, a gravação é recusada.</p>
           <pre class="ctx-code">${escape(instruction)}</pre>
           ${button('Copiar instrução', 'copy-text', 'copy', 'ghost', `data-text="${escape(instruction)}" data-done="Instrução copiada."`)}
         </section>
-        <section class="ctx-card">
-          <h2><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</h2>
-          ${ctx.stack?.trim() ? `<div class="ctx-text">${contextBlock(ctx.stack)}</div>` : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="stack">${icon('plus')}Linguagens, serviços, repositórios e onde está publicado.</button>`}
-        </section>
+        ${section('stack', 'Stack', 'Linguagens, serviços e onde está publicado.', 'layers')}
         <section class="ctx-card">
           <h2><span class="ctx-icon">${icon('link')}</span>Links</h2>
           ${ctx.links?.length ? `<ul class="ctx-links">${ctx.links.map((link) => `<li><a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">
-            <span>${escape(link.title)}</span><small>${escape(link.url.replace(/^https?:\/\//, ''))}</small>${icon('external-link')}</a></li>`).join('')}</ul>`
-            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="links">${icon('plus')}Site, repositório, design, painel…</button>`}
+            <span>${escape(link.title)}</span><small>${escape(hostOf(link.url))}</small>${icon('external-link')}</a></li>`).join('')}</ul>`
+            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="links">${icon('plus')}Design, painel, documentação…</button>`}
         </section>
-        <section class="ctx-card ctx-team">
-          <h2><span class="ctx-icon">${icon('users')}</span>Equipe</h2>
-          <ul>${board.members.map((member) => `<li>${face(member, 'card-face')}<span>${escape(member.name)}</span></li>`).join('')}</ul>
-        </section>
-      </div>
+      </aside>
     </div>
+  </div>`;
+}
+
+/** Diferença entre duas versões de um texto, por parágrafo/linha. */
+function diffLines(before = '', after = '') {
+  const split = (text) => (Array.isArray(text) ? text.map((link) => `${link.title} · ${link.url}`) : String(text ?? '').split(/\n+/)).map((line) => line.trim()).filter(Boolean);
+  const old = split(before); const now = split(after);
+  return [...old.filter((line) => !now.includes(line)).map((line) => ['out', line]),
+    ...now.map((line) => [old.includes(line) ? 'same' : 'in', line])];
+}
+
+let historyPick = null;
+function renderContextHistory(content) {
+  const { id, ctx, history } = contextCache;
+  const versions = history.filter((entry) => entry.kind === 'versao');
+  const picked = history.find((entry) => entry.kind === 'versao' && entry.version === historyPick) || versions[0];
+  const previous = picked && versions.find((entry) => entry.version < picked.version);
+  const nameOf = (key, value) => key === 'responsavelId' ? (board.members.find((member) => member.id === value)?.name || '') : value;
+  const diff = picked ? picked.changed.map((key) => `<h3>${CONTEXT_LABELS[key]}</h3><div class="ctx-diff">${
+    diffLines(nameOf(key, previous?.snapshot?.[key]), nameOf(key, picked.snapshot[key])).map(([kind, line]) => `<p data-diff="${kind}">${kind === 'in' ? '+ ' : ''}${escape(line)}</p>`).join('') || '<p data-diff="same">(vazio)</p>'}</div>`).join('') : '';
+  content.innerHTML = `<div class="ctx ctx-history" data-project="${id}">
+    <header class="ctx-hero">
+      <div class="ctx-hero-text"><h1>Histórico do contexto</h1></div>
+      <div class="ctx-hero-actions">${button('Voltar ao contexto', 'context-page', 'arrow-left', 'ghost')}</div>
+    </header>
+    ${history.length ? `<div class="ctx-history-grid">
+      <ol class="ctx-versions">${history.map((entry) => entry.kind === 'versao'
+        ? `<li><button type="button" class="ctx-version" data-action="context-pick" data-version="${entry.version}" aria-current="${entry === picked}">
+          <span class="ctx-version-top"><strong>v${entry.version} · ${escape(entry.by.actor)}</strong><small>${when(entry.by.at)}</small></span>
+          <small>${entry.changed.map((key) => CONTEXT_LABELS[key]).join(', ') || escape(entry.by.action)} · ${AGENTS.includes(entry.by.source) ? `via ${entry.by.source}` : 'Web'}</small>
+          ${Number.isInteger(entry.readVersion) && entry.version > 1 ? `<span class="ctx-badge" data-ok="true">${icon('check')}leu a v${entry.readVersion} antes de editar</span>` : ''}</button></li>`
+        : `<li class="ctx-version" data-kind="recusado"><span class="ctx-version-top"><strong>Recusado · ${escape(entry.by.actor)}</strong><small>${when(entry.by.at)}</small></span>
+          <small>Tentou salvar lendo a v${entry.readVersion}, mas já existia a v${entry.version}</small>
+          <span class="ctx-badge" data-ok="false">${icon('x')}precisou ler de novo</span></li>`).join('')}</ol>
+      ${picked ? `<article class="ctx-card ctx-diff-card">
+        <header class="ctx-card-head"><div><h2>O que mudou na v${picked.version}</h2>${signature({ ...picked.by, readVersion: picked.readVersion })}</div>
+        ${picked.version < ctx.version ? button(`Voltar para a v${picked.version}`, 'context-restore', 'undo-2', 'ghost', `data-version="${picked.version}"`) : '<small class="ctx-current">versão atual</small>'}</header>
+        ${diff || '<p class="ctx-sign">Nada mudou nesta versão.</p>'}
+      </article>` : ''}
+    </div>` : '<p class="empty">Ninguém editou o contexto ainda.</p>'}
   </div>`;
 }
 
@@ -508,22 +594,31 @@ async function editContext(focusKey) {
   const ctx = await request(`/projects/${id}/context`);
   contextEditing = true;
   const linkRow = (link = { title: '', url: '' }) => `<div class="ctx-link-row">
-    <input name="link-title" placeholder="Nome (ex.: Repositório)" value="${escape(link.title)}" maxlength="120" aria-label="Nome do link">
+    <input name="link-title" placeholder="Nome (ex.: Design)" value="${escape(link.title)}" maxlength="120" aria-label="Nome do link">
     <input name="link-url" placeholder="https://…" value="${escape(link.url)}" maxlength="500" inputmode="url" aria-label="Endereço do link">
     ${iconButton('Tirar link', 'context-link-remove', 'x')}</div>`;
-  content.innerHTML = `<form class="ctx ctx-editing" data-form="context" data-project="${id}">
+  const field = (name, label, value, attrs = '') => `<label class="ctx-mini"><span>${label}</span><input name="${name}" value="${escape(value || '')}" ${attrs}></label>`;
+  content.innerHTML = `<form class="ctx ctx-editing" data-form="context" data-project="${id}" data-read="${ctx.version}">
     <div class="ctx-bar">
-      <p class="ctx-updated"><span>Editando o contexto. Separe ideias com uma linha em branco.</span></p>
+      <p class="ctx-updated"><span>Editando a v${ctx.version}. Separe ideias com uma linha em branco.</span></p>
       <span class="ctx-actions">${button('Cancelar', 'context-cancel', '', 'ghost')}<button class="btn primary">${icon('check')}Salvar contexto</button></span>
     </div>
+    <section class="ctx-card ctx-env-edit">
+      <label class="ctx-mini"><span>Responsável</span><select name="responsavelId"><option value="">Ninguém</option>
+        ${board.members.map((member) => `<option value="${member.id}" ${member.id === ctx.responsavelId ? 'selected' : ''}>${escape(member.name)}</option>`).join('')}</select></label>
+      ${field('producao', 'Produção', ctx.producao, 'placeholder="https://…" inputmode="url" maxlength="500"')}
+      ${field('teste', 'Teste', ctx.teste, 'placeholder="https://…" inputmode="url" maxlength="500"')}
+      ${field('repositorio', 'Repositório', ctx.repositorio, 'placeholder="GAVVYO/projeto" maxlength="200"')}
+      ${field('branch', 'Branch', ctx.branch, 'placeholder="main" maxlength="120"')}
+    </section>
     <div class="ctx-grid">
       <div class="ctx-main">
         ${CONTEXT_PARTS.map(([key, title, hint, glyph]) => `<label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon(glyph)}</span>${title}</span>
           <textarea name="${key}" maxlength="12000" placeholder="${escape(hint)}">${escape(ctx[key] || '')}</textarea></label>`).join('')}
       </div>
       <aside class="ctx-side">
-        <label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</span>
-          <textarea name="stack" maxlength="12000" placeholder="Linguagens, serviços, repositórios e onde está publicado.">${escape(ctx.stack || '')}</textarea></label>
+        <label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('layers')}</span>Stack</span>
+          <textarea name="stack" maxlength="12000" placeholder="Linguagens, serviços e onde está publicado.">${escape(ctx.stack || '')}</textarea></label>
         <section class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('link')}</span>Links</span>
           <div class="ctx-links-edit">${(ctx.links?.length ? ctx.links : [undefined]).map(linkRow).join('')}</div>
           ${button('Mais um link', 'context-link-add', 'plus', 'ghost')}
@@ -1420,6 +1515,19 @@ document.addEventListener('click', async (event) => {
       if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
     } else if (action === 'context-edit') {
       await editContext(control.dataset.focus);
+    } else if (action === 'context-history' || action === 'context-page') {
+      contextView = action === 'context-history' ? 'history' : 'page';
+      historyPick = null;
+      renderContents();
+    } else if (action === 'context-pick') {
+      historyPick = Number(control.dataset.version);
+      renderContextHistory(document.querySelector('#content'));
+    } else if (action === 'context-restore') {
+      const { id, ctx } = contextCache;
+      const saved = await request(`/projects/${id}/context/restore/${control.dataset.version}`, 'POST', { versaoLida: ctx.version });
+      contextView = 'page';
+      renderContents();
+      message(`Voltou para a v${control.dataset.version} (agora é a v${saved.version}).`);
     } else if (action === 'context-cancel') {
       contextEditing = false;
       renderContents();
@@ -1528,12 +1636,17 @@ document.addEventListener('submit', async (event) => {
       const links = [...form.querySelectorAll('.ctx-link-row')].map((row) => ({
         title: row.querySelector('[name=link-title]').value.trim(), url: row.querySelector('[name=link-url]').value.trim()
       })).filter((link) => link.title || link.url).map((link) => ({ ...link, title: link.title || link.url }));
-      const body = { links };
-      for (const key of ['resumo', 'objetivo', 'regras', 'decisoes', 'stack']) body[key] = form.elements[key].value;
-      await request(`/projects/${form.dataset.project}/context`, 'PUT', body);
-      contextEditing = false;
-      renderContents();
-      message('Contexto salvo. Os assistentes já leem a versão nova.');
+      const body = { links, versaoLida: Number(form.dataset.read), responsavelId: form.elements.responsavelId.value || null };
+      for (const key of ['resumo', 'objetivo', 'regras', 'decisoes', 'stack', 'producao', 'teste', 'repositorio', 'branch']) body[key] = form.elements[key].value.trim();
+      try {
+        const saved = await request(`/projects/${form.dataset.project}/context`, 'PUT', body);
+        contextEditing = false;
+        renderContents();
+        message(`Contexto salvo na v${saved.version}. Os assistentes já leem a versão nova.`);
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        form.querySelector('.error').textContent = 'Alguém salvou o contexto enquanto você editava. Copie o seu texto, cancele e abra de novo para ver a versão nova.';
+      }
     } else if (kind === 'token') {
       const { token } = await request('/tokens', 'POST', data);
       showToken(token, data.source);

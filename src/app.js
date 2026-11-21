@@ -173,6 +173,9 @@ export function createApp(store, { production = false, origin = '', uploads = pr
   app.get('/api/projects/:id/context', async (req, res) => res.json(await store.projectContext(z.uuid().parse(req.params.id))));
   app.put('/api/projects/:id/context', async (req, res) =>
     res.json(await store.setProjectContext(z.uuid().parse(req.params.id), req.body, req.actor)));
+  app.get('/api/projects/:id/context/history', async (req, res) => res.json(await store.contextHistory(z.uuid().parse(req.params.id))));
+  app.post('/api/projects/:id/context/restore/:version', async (req, res) =>
+    res.json(await store.restoreContext(z.uuid().parse(req.params.id), z.coerce.number().int().min(1).parse(req.params.version), req.body, req.actor)));
 
   app.put('/api/preferences', async (req, res) => {
     const input = z.object({ background: z.enum(['noite', 'couro', 'asfalto', 'entardecer', 'imagem']) }).parse(req.body);

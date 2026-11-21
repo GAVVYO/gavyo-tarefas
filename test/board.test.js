@@ -62,7 +62,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 7);
+  assert.equal((await client.listTools()).tools.length, 8);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
@@ -71,14 +71,28 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   }
 
   // Contexto do projeto: o assistente lê e escreve; a tela vê quem mexeu e por qual canal.
-  const context = await call('atualizar_contexto_projeto', { projectId: project.id, objetivo: 'Publicar o quadro' });
+  const context = await call('atualizar_contexto_projeto', { projectId: project.id, versaoLida: 0, objetivo: 'Publicar o quadro' });
   assert.equal(context.updated.source, 'Codex');
+  assert.equal(context.version, 1);
+  assert.equal(context.sectionBy.objetivo.readVersion, 0);
   assert.equal((await call('ver_contexto_projeto', { projectId: project.id })).objetivo, 'Publicar o quadro');
-  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { regras: 'Sempre abrir PR.' } });
+  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 1, regras: 'Sempre abrir PR.', producao: 'https://tarefas.gavyo.me' } });
   assert.equal(viaWeb.status, 200);
+  assert.equal(viaWeb.body.version, 2);
+  // Quem não leu a versão atual é recusado, e a tentativa fica no histórico.
+  const stale = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 1, regras: 'Apagar tudo' } });
+  assert.equal(stale.status, 409);
+  const iaAtrasada = await client.callTool({ name: 'atualizar_contexto_projeto', arguments: { projectId: project.id, versaoLida: 1, stack: 'x' } });
+  assert.ok(iaAtrasada.isError && /versão 2/.test(iaAtrasada.content[0].text));
+  const log = (await request(`/api/projects/${project.id}/context/history`, { headers })).body;
+  assert.deepEqual(log.map((entry) => entry.kind).slice(0, 4), ['recusado', 'recusado', 'versao', 'versao']);
+  assert.equal(log[2].by.source, 'Web');
+  const voltou = await request(`/api/projects/${project.id}/context/restore/1`, { method: 'POST', headers, body: { versaoLida: 2 } });
+  assert.equal(voltou.body.regras, '');
+  assert.equal(voltou.body.version, 3);
   assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
   assert.equal(viaWeb.body.updated.source, 'Web');
-  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
+  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {
