@@ -48,6 +48,10 @@ No Claude Code, inicie a sessão com `GAVYO_MCP_TOKEN` disponível no ambiente. 
 
 Para testes locais, troque o URL por `http://127.0.0.1:3000/mcp`. O quadro busca automaticamente as mudanças da equipe e do MCP enquanto a aba estiver visível. Guarde tokens fora do Git.
 
+## Contexto do projeto
+
+Cada projeto tem uma aba **Contexto** (o que é, no que estamos, como trabalhamos, decisões, stack e links). Os assistentes leem com a ferramenta MCP `ver_contexto_projeto` e podem registrar decisões com `atualizar_contexto_projeto`. O botão **Entregar para o assistente** já pede para a IA ler o contexto antes de começar.
+
 ## Hospedagem
 
 O deploy previsto usa um site Node.js 22 e um banco MySQL dedicados. Configure `NODE_ENV=production`, `PUBLIC_ORIGIN=https://tarefas.gavyo.me` e `DATABASE_URL` nas variáveis da hospedagem. O servidor usa a porta recebida em `PORT`. Os prints dos cartões ficam em `UPLOAD_DIR` (padrão `.data/uploads`); na hospedagem, aponte para uma pasta fora da pasta do app, para uma publicação nova não apagar as imagens. A URL do MySQL deve ter usuário e senha codificados para URL quando contiverem caracteres especiais.

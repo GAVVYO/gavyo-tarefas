@@ -1,4 +1,3 @@
-import { setupTaskWindow } from './task-window.js';
 import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
@@ -6,7 +5,11 @@ import { avatarFor, setupProfileDock } from './profile-dock.js';
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
 const notice = document.querySelector('#notice');
-setupTaskWindow(dialog);
+// A ficha abre no centro sobre um véu escuro; clicar fora fecha (sem arrastar nem encaixar do lado).
+const scrim = Object.assign(document.createElement('div'), { className: 'task-scrim', hidden: true });
+document.body.append(scrim);
+scrim.addEventListener('click', () => dialog.close());
+dialog.addEventListener('close', () => { scrim.hidden = true; closeEditor(); void sendPresence(); });
 const stages = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
 const priorities = { alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
 let board;
@@ -201,9 +204,9 @@ async function refresh({ shell = false } = {}) {
 }
 
 function projectHeading() {
-  return view === 'board' && board.projects.length > 1
+  return (view === 'board' || view === 'context') && board.projects.length > 1
     ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
-    : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
+    : escape({ board: board.projects[0]?.name || 'Quadro', context: board.projects[0]?.name || 'Contexto', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
 }
 
 function updateProjectHeading() {
@@ -231,6 +234,7 @@ function renderShell() {
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
       ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
+      ${button('Contexto', 'context', 'book-open', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
     </nav>
   </header>
   <section class="heading">
@@ -239,7 +243,7 @@ function renderShell() {
     </div>
     <div id="mural-slot" class="mural-slot"></div>
   </section>
-  <div class="filters">
+  <div class="filters" ${view === 'context' ? 'hidden' : ''}>
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
@@ -258,6 +262,7 @@ function renderShell() {
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
         ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
         <div id="bg-slot">${backgroundPicker()}</div>
+        <div class="notify-pref">${notifyPrefButton()}</div>
       </div>
     </aside>
   </div>`;
@@ -271,6 +276,8 @@ function navigate(nextView) {
   if (view === nextView) return;
   const previous = root.querySelector('.nav-pill')?.getBoundingClientRect();
   view = nextView;
+  contextEditing = false;
+  setTimeout(sendPresence, 0);
   search = '';
   blockedOnly = false;
   renderShell();
@@ -341,11 +348,17 @@ function agentBrief(card) {
     card.description ? `\nO que precisa ser feito:\n${card.description}` : '',
     card.checklist.length ? `\nPassos:\n${card.checklist.map((item) => `- [${item.done ? 'x' : ' '}] ${item.title}`).join('\n')}` : '',
     card.attachments?.length ? `\nO cartão tem ${card.attachments.length} print(s) no GAVYO Tarefas.` : '',
-    `\nBranch sugerida: ${branchName(card)}`,
+    `\nAntes de começar, leia o contexto do projeto: MCP gavyo-tarefas, ferramenta ver_contexto_projeto com projectId ${card.projectId}.`,
+    `Branch sugerida: ${branchName(card)}`,
     `Quando terminar, use o MCP gavyo-tarefas para comentar o que fez no cartão ${card.key || ''} e mover para a etapa certa.`
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * Cartão com uma ordem só, igual em todos (de relance):
+ * 1) número + Urgente · rosto   2) título   3) sinais sempre na mesma ordem   4) trilha da águia no pé.
+ * Descrição e prints ficam na ficha.
+ */
 function cardTemplate(card) {
   const assignee = board.members.find((member) => member.id === card.assigneeId);
   const due = dueLabel(card);
@@ -354,39 +367,37 @@ function cardTemplate(card) {
   const checks = card.checklist.filter((item) => item.done).length;
   const title = escape(card.title);
   const agent = lastAgent(card);
+  const live = agentLive(card);
+  const blocked = card.blocked && card.status !== 'done';
+  const prints = card.attachments?.length || 0;
   const actions = card.archived
     ? button('Restaurar', 'restore', 'archive-restore', 'ghost', `data-card="${card.id}"`)
     : Object.entries(stages).filter(([key]) => key !== card.status)
       .map(([key, label]) => button(label, 'move', 'arrow-right', 'ghost', `data-card="${card.id}" data-status="${key}"`)).join('') +
       (card.status === 'done' ? button('Arquivar', 'archive-card', 'archive', 'ghost', `data-card="${card.id}"`) : '');
+  const signals = [
+    blocked ? `<button type="button" class="sig sig-blocked" data-action="view-block" data-card="${card.id}" title="${escape(card.blocked)}">${icon('octagon-pause')}Travado</button>` : '',
+    due ? `<span class="sig due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : '',
+    steps ? `<span class="sig" data-full="${checks === steps}" aria-label="${checks} de ${steps} passos feitos">${icon('list-checks')}${checks}/${steps}</span>` : '',
+    card.comments.length ? `<span class="sig" aria-label="${card.comments.length} mensagens">${icon('message-square')}${card.comments.length}</span>` : '',
+    prints ? `<span class="sig" aria-label="${prints} prints">${icon('image')}${prints}</span>` : '',
+    agent ? `<span class="sig card-agent" data-live="${live}" title="${live ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}${live ? `${agent} agora` : agent}</span>` : ''
+  ].join('');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
-    data-urgent="${urgent}" data-blocked="${Boolean(card.blocked)}" data-live="${agentLive(card)}" ${card.archived ? '' : 'draggable="true"'}>
-    ${card.attachments?.length && card.status !== 'done' ? `<button type="button" class="card-cover" data-action="edit" data-card="${card.id}" tabindex="-1" aria-hidden="true">
-      <img src="${fileUrl(card, card.attachments.at(-1))}" alt="" loading="lazy" draggable="false">
-      ${card.attachments.length > 1 ? `<span class="cover-count">${icon('images')}${card.attachments.length}</span>` : ''}</button>` : ''}
-    ${card.blocked && card.status !== 'done' ? `<button type="button" class="card-block" data-action="view-block" data-card="${card.id}">
-      ${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
-    <div class="card-top">
-      <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${card.key ? `<span class="card-key">${card.key}</span>` : ''}${urgent ? `<span class="urgent">Urgente</span> ` : ''}${title}</button></h3>
+    data-urgent="${urgent}" data-blocked="${Boolean(blocked)}" data-live="${live}" ${card.archived ? '' : 'draggable="true"'}>
+    <div class="card-head">
+      <span class="card-key">${card.key || ''}${urgent ? `<span class="card-urgent">${icon('flag')}Urgente</span>` : ''}</span>
+      ${view !== 'board' ? `<span class="card-project">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</span>` : ''}
       <details class="menu"><summary aria-label="Ações de ${title}" title="Ações do cartão">${icon('ellipsis')}</summary><div class="menu-items">${actions}</div></details>
-    </div>
-    ${card.description && card.status !== 'done' ? `<p class="card-desc">${escape(card.description.slice(0, 110))}${card.description.length > 110 ? '…' : ''}</p>` : ''}
-    ${view !== 'board' ? `<p class="card-project">${escape(board.projects.find((item) => item.id === card.projectId)?.name)}</p>` : ''}
-    <div class="card-bottom">
       <span class="card-who" title="${escape(assignee?.name || 'Sem responsável')}">
         ${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
         <span class="sr-only">${escape(assignee?.name || 'Sem responsável')}</span>
       </span>
-      <span class="card-signals">
-        ${agent ? `<span class="card-agent" data-live="${agentLive(card)}" title="${agentLive(card) ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}<span>${agentLive(card) ? `${agent} agora` : agent}</span></span>` : ''}
-        ${due ? `<span class="due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : ''}
-        ${card.comments.length ? `<span class="signal" aria-label="${card.comments.length} comentários">${icon('message-square')}${card.comments.length}</span>` : ''}
-        ${card.attachments?.length && card.status === 'done' ? `<span class="signal" aria-label="${card.attachments.length} prints">${icon('image')}${card.attachments.length}</span>` : ''}
-      </span>
-      <div class="card-footer">${nextCardAction(card)}</div>
     </div>
-    ${steps ? `<div class="trail" data-progress="${checks / steps}" data-full="${checks === steps}" role="img" aria-label="${checks} de ${steps} passos feitos">
-      <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${checks}/${steps}</span></div>` : ''}
+    <h3><button type="button" class="card-title" data-action="edit" data-card="${card.id}">${title}</button></h3>
+    ${signals || nextCardAction(card) ? `<div class="card-foot"><span class="card-signals">${signals}</span><div class="card-footer">${nextCardAction(card)}</div></div>` : ''}
+    ${steps ? `<div class="card-rail trail" data-progress="${checks / steps}" data-full="${checks === steps}" aria-hidden="true">
+      <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""></div>` : ''}
   </article>`;
 }
 
@@ -419,6 +430,7 @@ function muralTemplate(scoped) {
       </span>
       <span class="figure-name">${escape(member.id === board.user.id ? `${member.name} (você)` : member.name)}</span>
       <span class="figure-load">${load}${stuck ? ` · <b>${stuck} travado${stuck > 1 ? 's' : ''}</b>` : ''}</span>
+      <span class="figure-presence" aria-live="off"></span>
     </button></li>`;
   }).join('');
   const loose = scoped.filter((card) => !card.assigneeId && card.status !== 'done').length;
@@ -430,9 +442,109 @@ function muralTemplate(scoped) {
   </section>`;
 }
 
+/* ---------- Contexto do projeto ---------- */
+let contextEditing = false;
+const CONTEXT_PARTS = [
+  ['resumo', 'O que é', 'Em poucas linhas: o que o projeto faz e para quem.', 'compass'],
+  ['objetivo', 'No que estamos agora', 'A meta desta semana ou deste ciclo.', 'target'],
+  ['regras', 'Como trabalhamos', 'Regras para a equipe e para os assistentes: branch, PR, testes, tom de voz…', 'scroll-text'],
+  ['decisoes', 'Decisões tomadas', 'O que já foi decidido e por quê, para ninguém refazer a discussão.', 'milestone']
+];
+
+function contextBlock(text) {
+  return text.trim().split(/\n{2,}/).map((part) => `<p>${linkify(part)}</p>`).join('');
+}
+
+async function renderContext(content) {
+  const id = projectId;
+  if (!id) { content.innerHTML = '<p class="empty">Crie um projeto para escrever o contexto.</p>'; return; }
+  if (!content.querySelector('.ctx')) content.innerHTML = '<div class="ctx ctx-loading" aria-busy="true"></div>';
+  const ctx = await request(`/projects/${id}/context`).catch((error) => { message(error.message); return null; });
+  if (!ctx || view !== 'context' || id !== projectId || contextEditing) return;
+  const who = ctx.updated && memberNamed(ctx.updated.actor);
+  const instruction = `Antes de começar qualquer tarefa do projeto ${board.projects.find((item) => item.id === id)?.name}, use o MCP gavyo-tarefas: chame ver_contexto_projeto com projectId ${id} e siga as regras de lá.`;
+  content.innerHTML = `<div class="ctx" data-project="${id}">
+    <div class="ctx-bar">
+      <p class="ctx-updated">${ctx.updated ? `${face(who, 'card-face')}<span><b>${escape(ctx.updated.actor)}</b> mexeu ${when(ctx.updated.at)}${AGENTS.includes(ctx.updated.source) ? ` pelo ${ctx.updated.source}` : ''}</span>` : '<span>Ninguém escreveu o contexto ainda.</span>'}</p>
+      ${button('Editar contexto', 'context-edit', 'pencil', 'primary')}
+    </div>
+    <div class="ctx-grid">
+      <div class="ctx-main">
+        ${CONTEXT_PARTS.map(([key, title, hint, glyph], index) => `<section class="ctx-card" data-part="${key}">
+          <h2><span class="ctx-icon">${icon(glyph)}</span>${title}</h2>
+          ${ctx[key]?.trim() ? `<div class="ctx-text">${contextBlock(ctx[key])}</div>`
+            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="${key}">${icon('plus')}${hint}</button>`}
+        </section>`).join('')}
+      </div>
+      <aside class="ctx-side">
+        <section class="ctx-card ctx-agents">
+          <h2><span class="ctx-icon">${icon('bot')}</span>Para os assistentes</h2>
+          <p>O Claude e o Codex leem esta página pelo MCP antes de começar. Cole isto no começo da conversa:</p>
+          <pre class="ctx-code">${escape(instruction)}</pre>
+          ${button('Copiar instrução', 'copy-text', 'copy', 'ghost', `data-text="${escape(instruction)}" data-done="Instrução copiada."`)}
+        </section>
+        <section class="ctx-card">
+          <h2><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</h2>
+          ${ctx.stack?.trim() ? `<div class="ctx-text">${contextBlock(ctx.stack)}</div>` : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="stack">${icon('plus')}Linguagens, serviços, repositórios e onde está publicado.</button>`}
+        </section>
+        <section class="ctx-card">
+          <h2><span class="ctx-icon">${icon('link')}</span>Links</h2>
+          ${ctx.links?.length ? `<ul class="ctx-links">${ctx.links.map((link) => `<li><a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">
+            <span>${escape(link.title)}</span><small>${escape(link.url.replace(/^https?:\/\//, ''))}</small>${icon('external-link')}</a></li>`).join('')}</ul>`
+            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="links">${icon('plus')}Site, repositório, design, painel…</button>`}
+        </section>
+        <section class="ctx-card ctx-team">
+          <h2><span class="ctx-icon">${icon('users')}</span>Equipe</h2>
+          <ul>${board.members.map((member) => `<li>${face(member, 'card-face')}<span>${escape(member.name)}</span></li>`).join('')}</ul>
+        </section>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function editContext(focusKey) {
+  const content = document.querySelector('#content');
+  const id = projectId;
+  const ctx = await request(`/projects/${id}/context`);
+  contextEditing = true;
+  const linkRow = (link = { title: '', url: '' }) => `<div class="ctx-link-row">
+    <input name="link-title" placeholder="Nome (ex.: Repositório)" value="${escape(link.title)}" maxlength="120" aria-label="Nome do link">
+    <input name="link-url" placeholder="https://…" value="${escape(link.url)}" maxlength="500" inputmode="url" aria-label="Endereço do link">
+    ${iconButton('Tirar link', 'context-link-remove', 'x')}</div>`;
+  content.innerHTML = `<form class="ctx ctx-editing" data-form="context" data-project="${id}">
+    <div class="ctx-bar">
+      <p class="ctx-updated"><span>Editando o contexto. Separe ideias com uma linha em branco.</span></p>
+      <span class="ctx-actions">${button('Cancelar', 'context-cancel', '', 'ghost')}<button class="btn primary">${icon('check')}Salvar contexto</button></span>
+    </div>
+    <div class="ctx-grid">
+      <div class="ctx-main">
+        ${CONTEXT_PARTS.map(([key, title, hint, glyph]) => `<label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon(glyph)}</span>${title}</span>
+          <textarea name="${key}" maxlength="12000" placeholder="${escape(hint)}">${escape(ctx[key] || '')}</textarea></label>`).join('')}
+      </div>
+      <aside class="ctx-side">
+        <label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</span>
+          <textarea name="stack" maxlength="12000" placeholder="Linguagens, serviços, repositórios e onde está publicado.">${escape(ctx.stack || '')}</textarea></label>
+        <section class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('link')}</span>Links</span>
+          <div class="ctx-links-edit">${(ctx.links?.length ? ctx.links : [undefined]).map(linkRow).join('')}</div>
+          ${button('Mais um link', 'context-link-add', 'plus', 'ghost')}
+        </section>
+      </aside>
+    </div>
+    <div class="error" role="alert"></div>
+  </form>`;
+  content.querySelector('.ctx-links-edit').dataset.template = linkRow();
+  (content.querySelector(`[name="${focusKey}"]`) || (focusKey === 'links' && content.querySelector('[name=link-title]')) || content.querySelector('textarea'))?.focus();
+}
+
 function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
+  if (view === 'context') {
+    document.querySelector('#mural-slot').innerHTML = '';
+    document.querySelector('#scope-summary').textContent = 'O que a equipe e os assistentes precisam saber antes de começar.';
+    if (!contextEditing) void renderContext(content);
+    return;
+  }
   const needle = search.trim().toLocaleLowerCase('pt-BR');
   const scoped = (view === 'archive' ? board.archive : board.cards).filter((card) =>
     (view !== 'board' || card.projectId === projectId) &&
@@ -463,6 +575,7 @@ function renderContents() {
   }
   const slot = document.querySelector('#mural-slot');
   if (slot) slot.innerHTML = view === 'board' ? muralTemplate(scoped) : '';
+  if (slot && view === 'board') paintPresence();
   content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
     const inStage = cards.filter((card) => card.status === key);
     return `<section class="column" data-status="${key}" aria-label="${label}">
@@ -480,7 +593,7 @@ function paintTrails(scope) {
   for (const trail of scope.querySelectorAll('.trail')) trail.style.setProperty('--p', trail.dataset.progress);
 }
 
-function openDialog(title, html, focusSelector, { details = '', footer = '', origin } = {}) {
+function openDialog(title, html, focusSelector, { details = '', footer = '', origin, more = '' } = {}) {
   const task = Boolean(details);
   delete dialog.dataset.editing;
   delete dialog.dataset.editorStep;
@@ -488,18 +601,12 @@ function openDialog(title, html, focusSelector, { details = '', footer = '', ori
   const opening = !dialog.open;
   if (opening) restoreFocus = document.activeElement;
   dialog.classList.toggle('task-dialog', task);
-  const tools = task ? `<div class="task-window-tools">
-    <button class="btn tile ghost task-dock-control" type="button" data-task-dock="left" aria-label="Encaixar à esquerda" title="Encaixar à esquerda">${taskIcon('left')}</button>
-    <button class="btn tile ghost task-dock-control" type="button" data-task-dock="right" aria-label="Encaixar à direita" title="Encaixar à direita">${taskIcon('right')}</button>
-    ${iconButton('Fechar', 'close', 'x')}
-  </div>` : iconButton('Fechar', 'close', 'x');
-  dialog.innerHTML = `<header class="dialog-head ${task ? 'task-drag' : ''}">
-    ${task ? `<span class="task-grip" title="Arraste a ficha">${taskIcon('grip')}</span>` : ''}
+  const tools = task ? `<div class="task-window-tools">${more}${iconButton('Fechar', 'close', 'x')}</div>` : iconButton('Fechar', 'close', 'x');
+  dialog.innerHTML = `<header class="dialog-head">
     <div class="dialog-headline">
     <h2 id="dialog-title" tabindex="-1">${title}</h2>${details}</div>${tools}</header>
-    <div class="dialog-body">${html}</div>${footer}${task ? `
-      <span class="task-snap-hawk" aria-hidden="true"></span>
-      <button class="task-resize" type="button" aria-label="Redimensionar ficha com as setas" title="Puxe para redimensionar">${taskIcon('resize')}</button>` : ''}`;
+    <div class="dialog-body">${html}</div>${footer}`;
+  document.querySelector('.task-scrim')?.toggleAttribute('hidden', !task);
   if (opening) {
     if (task) dialog.show(); else dialog.showModal();
     if (origin && dialog.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -537,50 +644,6 @@ function linkify(text) {
     i % 2 ? `<a href="${escape(part)}" target="_blank" rel="noopener noreferrer">${escape(part)}</a>` : escape(part)).join('');
 }
 
-const editorSteps = [
-  ['title', 'Título', 'task'], ['description', 'Descrição', 'text'],
-  ['assignee', 'Responsável', 'person'], ['due', 'Prazo', 'date'],
-  ['priority', 'Prioridade', 'priority'], ['status', 'Etapa', 'stage'],
-  ['blocked', 'Bloqueio', 'block'], ['checklist', 'Checklist', 'checks']
-];
-
-function editArea(step, content, className = '') {
-  return `<button class="task-edit-area ${className}" type="button" data-action="task-section"
-    data-section="edit" data-step="${step}">${content}</button>`;
-}
-
-function taskOptions(name, options, selected) {
-  return `<div class="task-options">${options.map(([id, label, emblem]) => `<label class="task-option">
-    <input type="radio" name="${name}" value="${escape(id)}" ${id === selected ? 'checked' : ''}>
-    <span>${emblem}${escape(label)}</span>
-  </label>`).join('')}</div>`;
-}
-
-function editorPanels(card) {
-  const people = [['', 'Sem responsável', taskIcon('person')], ...board.members.map((member) => {
-    const avatar = avatarFor(member.name);
-    const emblem = avatar ? `<img class="editor-avatar" loading="lazy" src="/api/avatar-assets/${avatar}.png" alt="">`
-      : `<span class="avatar" aria-hidden="true">${escape(initialsOf(member.name))}</span>`;
-    return [member.id, member.name, emblem];
-  })];
-  const panels = {
-    title: `<input class="task-title-input" name="title" value="${escape(card.title)}" placeholder="Nome da tarefa" maxlength="160" aria-label="Título">`,
-    description: `<textarea class="task-writing" name="description" maxlength="8000" placeholder="Escreva o que precisa ser feito…" aria-label="Descrição">${escape(card.description)}</textarea>`,
-    assignee: taskOptions('assigneeId', people, card.assigneeId || ''),
-    due: `<input type="hidden" name="due" value="${card.due || ''}"><div class="task-calendar"></div>
-          ${button('Tirar prazo', 'task-clear-day', '', 'ghost')}`,
-    priority: taskOptions('priority', Object.entries(priorities).map(([id, label]) => [id, label, taskIcon('priority')]), card.priority),
-    status: card.archived ? '<p class="muted">Restaure o cartão para mudar a etapa.</p>'
-      : taskOptions('status', Object.entries(stages).map(([id, label]) => [id, label, taskIcon('stage')]), card.status),
-    blocked: field('Motivo do bloqueio', `<textarea class="task-writing" name="blocked" maxlength="500" placeholder="Qual é o impedimento?">${escape(card.blocked)}</textarea>`),
-    checklist: `<div id="checklist" class="cards">${card.checklist.map(checklistItem).join('')}</div>
-      ${button('Adicionar passo', 'add-check', 'plus')}`
-  };
-  return editorSteps.map(([key, label, glyph]) => `<section class="editor-step" data-editor-step="${key}" aria-label="${label}" hidden>
-    <h3 class="editor-step-title">${taskIcon(glyph)} ${label}</h3>${panels[key]}
-  </section>`).join('');
-}
-
 /** Hora em palavras: "hoje, 21:54", "ontem, 10:02", "18/11, 09:30". */
 function when(iso) {
   const at = new Date(iso);
@@ -608,144 +671,296 @@ function actionSentence(action) {
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts.at(-1)}` : parts[0];
 }
 
+/* ---------- Ficha do cartão: tudo se edita no lugar, sem assistente passo a passo ---------- */
+const FIELD_PROPS = ['status', 'assignee', 'due', 'priority', 'blocked'];
+let openPopover = null;
+
+const stageDot = (status) => `<span class="stage-dot" data-status="${status}"></span>`;
+function propChip(card, prop) {
+  const assignee = board.members.find((item) => item.id === card.assigneeId);
+  const due = dueLabel(card);
+  const content = {
+    status: `${stageDot(card.status)}${stages[card.status]}`,
+    assignee: assignee ? `${face(assignee, 'card-face')}${escape(assignee.name)}` : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>Ninguém`,
+    due: due ? `${icon('calendar-days')}<span class="due-text" data-tone="${due.tone}">${due.text}</span>` : `${icon('calendar-days')}<span class="muted">Prazo</span>`,
+    priority: card.priority === 'alta' ? `${icon('flag')}<span class="urgent-text">Urgente</span>` : `${icon('flag')}<span class="${card.priority === 'baixa' ? 'muted' : ''}">${priorities[card.priority]}</span>`,
+    blocked: card.blocked ? `${icon('octagon-pause')}<span class="blocked-text">Travado</span>` : `${icon('octagon-pause')}<span class="muted">Travar</span>`
+  }[prop];
+  const labels = { status: 'Etapa', assignee: 'Quem faz', due: 'Prazo', priority: 'Prioridade', blocked: 'Travado' };
+  return `<span class="chip-prop" data-prop="${prop}" title="${labels[prop]}">${content}</span>`;
+}
+
 function showCard(card, origin, focus = true) {
   if (!card) return;
+  closePopover();
   const project = board.projects.find((item) => item.id === card.projectId);
-  const assignee = board.members.find((item) => item.id === card.assigneeId);
   const done = card.checklist.filter((item) => item.done).length;
-  const due = dueLabel(card);
+  const prints = card.attachments || [];
   const details = `<p class="task-project">${card.key ? `<span class="task-key">${card.key}</span>` : ''}${escape(project?.name)}${card.archived ? ' · Arquivado' : ''}
-    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>
-    <div class="task-copy">
+    ${agentLive(card) ? `<span class="card-agent" data-live="true">${icon('bot')}<span>${lastAgent(card)} mexendo agora</span></span>` : ''}</p>`;
+  const editTrigger = card.archived ? '' : `<button type="button" class="btn edit-trigger" data-action="edit-mode" data-card="${card.id}" aria-expanded="false">${icon('pencil')}Editar</button>`;
+  const more = editTrigger + `<details class="menu task-more"><summary aria-label="Mais ações do cartão" title="Mais ações">${icon('ellipsis')}</summary><div class="menu-items">
       ${button('Copiar número', 'copy-text', 'hash', 'ghost', `data-text="${escape(card.key || '')}" data-done="Número copiado."`)}
       ${button('Copiar branch', 'copy-text', 'git-branch', 'ghost', `data-text="${escape(branchName(card))}" data-done="Branch copiada: ${escape(branchName(card))}"`)}
       ${button('Entregar para o assistente', 'copy-brief', 'bot', 'ghost', `data-card="${card.id}"`)}
-    </div>`;
+    </div></details>`;
   const footer = `<footer class="task-footer">
     <p class="task-feedback" role="status" hidden></p>
-    <div class="inspector-edit-actions" hidden>
-      ${button('Cancelar', 'task-cancel', '', 'ghost', `data-card="${card.id}"`)}
-      ${button('Anterior', 'task-step-shift', 'arrow-left', 'ghost', 'data-offset="-1"')}
-      ${button('Próxima', 'task-step-shift', 'arrow-right', '', 'data-offset="1"')}
-      <button class="btn primary" type="submit" form="task-edit">${icon('check')} Salvar alterações</button>
-    </div>
+    <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
+      <textarea name="comment" maxlength="2000" rows="1" required aria-label="Mensagem para a equipe"
+        placeholder="Escreva para a equipe e para os assistentes…"></textarea>
+      <div class="composer-bar">
+        ${card.archived ? '' : `<label class="composer-plus" title="Pôr uma imagem">${icon('plus')}<span class="sr-only">Pôr uma imagem</span>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`}
+        <span class="composer-hint">Enter envia · Ctrl+V cola print</span>
+        <button class="composer-send" aria-label="Enviar">${icon('send-horizontal')}</button>
+      </div>
+      <div class="error" role="alert"></div>
+    </form>
   </footer>`;
-  const tabs = [
-    ['summary', 'Resumo', 'task'],
-    ['conversation', 'Conversa', 'chat'],
-    ['history', 'Histórico', 'history']
-  ];
-  openDialog(editArea('title', `<span>${escape(card.title)}</span>`, 'task-heading-edit'), `
-    <div class="inspector-overview">
-      <div class="inspector-meta">
-        ${editArea('status', stages[card.status], 'inspector-stage')}
-        ${editArea('assignee', `${assignee ? face(assignee, 'card-face') : `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>`}
-          ${escape(assignee?.name || 'Sem responsável')}`)}
-        ${editArea("due", `${taskIcon("date")} ${due ? due.text : "Sem prazo"}`)}
-        ${editArea('priority', `${taskIcon('priority')} ${card.priority === 'alta' ? 'Urgente' : `Prioridade ${priorities[card.priority].toLowerCase()}`}`)}
-      </div>
-      <div class="inspector-actions">
-        ${button('Editar', 'task-section', 'pencil', 'inspector-edit ghost', 'data-section="edit"')}
-        ${nextCardAction(card)}
-      </div>
+  const title = `<textarea class="title-input" data-field="title" data-card="${card.id}" rows="1" maxlength="160"
+    aria-label="Título do cartão" ${card.archived ? 'readonly' : ''}>${escape(card.title)}</textarea>`;
+  openDialog(title, `<div class="ficha" tabindex="-1" data-card="${card.id}" data-version="${card.version}">
+    <div class="props-row" role="group" aria-label="Detalhes do cartão">
+      ${FIELD_PROPS.map((prop) => propChip(card, prop)).join('')}
+      <span class="props-next">${nextCardAction(card)}</span>
     </div>
-    <nav class="inspector-nav" aria-label="Seções da ficha">
-      ${tabs.map(([key, label, glyph]) => button(taskIcon(glyph) + label, 'task-section', '', 'ghost',
-        `data-section="${key}" aria-pressed="${key === 'summary'}" aria-controls="task-${key}"`)).join('')}
-    </nav>
-    <section class="inspector-section" id="task-summary" data-task-section="summary">
-      ${card.blocked ? `<div class="inspector-block">${icon('octagon-pause')}
-        <div><h3>${editArea('blocked', 'Travado')}</h3><p>${escape(card.blocked)}</p></div></div>` : ''}
-      <section class="inspector-description">
-        <h3 class="sr-only">Descrição</h3>
-        ${card.description ? `<p>${linkify(card.description)}</p>`
-          : editArea('description', `${icon('plus')} Escrever o que precisa ser feito`, 'inspector-empty')}
-      </section>
-      <section class="inspector-prints" aria-labelledby="prints-title">
-        <div class="inspector-progress-label"><h3 id="prints-title">Prints</h3>${(card.attachments || []).length ? `<span>${card.attachments.length}</span>` : ''}</div>
-        <ul class="prints">${(card.attachments || []).map((item, index) => `<li><button type="button" class="print" data-action="view-print"
-          data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${card.attachments.length}, de ${escape(item.by)}">
-          <img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}
-          ${card.archived ? '' : `<li class="print-add-cell"><label class="print-add" data-drop="${card.id}" title="Pôr imagem (ou Ctrl+V, ou arraste)">
-            ${icon('plus')}<span class="sr-only">Pôr imagem: escolha, cole com Ctrl+V ou arraste</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}">
-          </label></li>`}</ul>
-      </section>
-      ${`<section class="inspector-checks">
-        <div class="inspector-progress-label"><h3>Passos</h3>${editArea('checklist', `${icon('pencil')} ${card.checklist.length ? 'Mudar passos' : 'Adicionar passos'}`, 'inspector-link')}</div>
-        ${card.checklist.length ? `<div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" role="img" aria-label="${done} de ${card.checklist.length} passos feitos">
-          <span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""><span class="trail-count">${done}/${card.checklist.length}</span></div>` : ''}
-        <ul class="steps">${card.checklist.map((item, index) => `<li><button type="button" class="step" data-action="toggle-check"
-          data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
-          <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button></li>`).join('')}</ul>
-      </section>`}
+    ${card.blocked ? `<button type="button" class="ficha-block" data-action="edit-opt" data-prop="blocked" data-card="${card.id}">${icon('octagon-pause')}<span><b>Travado:</b> ${escape(card.blocked)}</span></button>` : ''}
+    <textarea class="desc-input" data-field="description" data-card="${card.id}" rows="2" maxlength="8000" aria-label="Descrição"
+      placeholder="Adicionar descrição…" ${card.archived ? 'readonly' : ''}>${escape(card.description)}</textarea>
+    <section class="ficha-steps" aria-label="Passos">
+      ${card.checklist.length ? `<div class="steps-head"><span>Passos</span><span class="trail-count">${done}/${card.checklist.length}</span></div>
+        <div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" aria-hidden="true"><span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""></div>` : ''}
+      <ul class="steps">${card.checklist.map((item, index) => `<li class="step-row"><button type="button" class="step" data-action="toggle-check"
+        data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
+        <span class="step-box" aria-hidden="true">${icon('check')}</span><span>${escape(item.title)}</span></button>
+        ${card.archived ? '' : `<button type="button" class="step-remove" data-action="remove-step" data-card="${card.id}" data-index="${index}" aria-label="Tirar passo ${escape(item.title)}">${icon('x')}</button>`}</li>`).join('')}</ul>
+      ${card.archived ? '' : `<label class="step-add">${icon('plus')}<input data-add-step="${card.id}" maxlength="240" placeholder="Adicionar passo e Enter" aria-label="Novo passo"></label>`}
     </section>
-    <section class="inspector-section" id="task-conversation" data-task-section="conversation" hidden>
-      <div class="thread" id="task-comments">${cardActivity(card)}</div>
-      <form class="composer" data-form="comment" data-card="${card.id}" data-version="${card.version}">
-        <textarea name="comment" maxlength="2000" rows="2" required aria-label="Mensagem para a equipe"
-          placeholder="Escreva para a equipe e para os assistentes…"></textarea>
-        <div class="composer-bar">
-          ${card.archived ? '' : `<label class="composer-plus" title="Pôr uma imagem">${icon('plus')}<span class="sr-only">Pôr uma imagem</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`}
-          <span class="composer-hint">Enter envia · Shift+Enter pula linha · Ctrl+V cola print</span>
-          <button class="composer-send" aria-label="Enviar">${icon('send-horizontal')}</button>
-        </div>
-        <div class="error" role="alert"></div>
-      </form>
-    </section>
-    <section class="inspector-section" id="task-history" data-task-section="history" hidden>
-      <ol class="history" id="task-history-list">${cardHistory(card)}</ol>
-    </section>
-    <section class="inspector-section" data-task-section="edit" hidden>
-      <form id="task-edit" data-form="edit" data-card="${card.id}" data-version="${card.version}">
-        <nav class="editor-steps" aria-label="Etapas da edição">${editorSteps.map(([key, label, glyph]) =>
-          button(taskIcon(glyph) + `<span>${label}</span>`, 'task-step', '', 'ghost', `data-step="${key}"`)).join('')}</nav>
-        ${editorPanels(card)}
-        <div class="error task-edit-error" role="alert"></div>
-      </form>
-    </section>`, focus ? '#dialog-title' : null, { details, footer, origin });
+    ${prints.length ? `<ul class="prints">${prints.map((item, index) => `<li><button type="button" class="print" data-action="view-print"
+      data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${prints.length}"><img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}</ul>` : ''}
+    <div class="activity-head">
+      <nav class="inspector-nav" aria-label="Atividade do cartão">
+        ${button('Conversa', 'task-section', '', 'ghost', 'data-section="conversation" aria-pressed="true"')}
+        ${button('Histórico', 'task-section', '', 'ghost', 'data-section="history" aria-pressed="false"')}
+      </nav>
+    </div>
+    <section id="task-conversation" data-task-section="conversation"><div class="thread" id="task-comments">${cardActivity(card)}</div></section>
+    <section id="task-history" data-task-section="history" hidden><ol class="history" id="task-history-list">${cardHistory(card)}</ol></section>
+  </div>`, null, { details, footer, origin, more });
   paintTrails(dialog);
+  for (const box of dialog.querySelectorAll('.title-input, .desc-input')) autoGrow(box);
+  // Abre sem pôr o cursor no título (no celular isso abriria o teclado).
+  if (focus) dialog.querySelector('.ficha')?.focus({ preventScroll: true });
+  if (focus) void sendPresence(); else paintPresence();
 }
 
-function setTaskSection(section, step = 'title') {
-  dialog.dataset.editing = String(section === 'edit');
-  for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== section;
-  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) {
-    control.setAttribute('aria-pressed', String(control.dataset.section === section));
-  }
-  if (section === 'conversation') {
-    const thread = dialog.querySelector('#task-comments');
-    if (thread) thread.scrollTop = thread.scrollHeight;
-  }
-  const editing = section === 'edit';
-  dialog.querySelector('.inspector-edit-actions').hidden = !editing;
-  dialog.querySelector('.inspector-edit').hidden = editing;
-  if (editing) setEditorStep(step);
+function autoGrow(box) {
+  box.style.height = 'auto';
+  box.style.height = `${box.scrollHeight}px`;
 }
 
-function setEditorStep(step, focus = true) {
-  const panel = dialog.querySelector(`[data-editor-step="${step}"]`);
-  if (!panel) return;
-  for (const item of dialog.querySelectorAll('[data-editor-step]')) item.hidden = item !== panel;
-  for (const control of dialog.querySelectorAll('.editor-steps button')) {
-    control.setAttribute('aria-pressed', String(control.dataset.step === step));
-  }
-  const previous = dialog.dataset.editorStep;
-  dialog.dataset.editorStep = step;
-  if (previous !== step && panel.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    panel.animate([{ opacity: .55, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
-      { duration: 170, easing: 'cubic-bezier(.16,1,.3,1)' });
-  }
-  const position = editorSteps.findIndex(([key]) => key === step);
-  dialog.querySelector('[data-action=task-step-shift][data-offset="-1"]').disabled = position === 0;
-  dialog.querySelector('[data-action=task-step-shift][data-offset="1"]').disabled = position === editorSteps.length - 1;
-  if (step === 'due' && !panel.querySelector('.calendar-day')) renderTaskCalendar(panel, today());
-  if (focus) (panel.querySelector('input:not([type=hidden]), textarea, .calendar-day[aria-pressed=true]') ||
-    dialog.querySelector(`.editor-steps [data-step="${step}"]`))?.focus({ preventScroll: true });
+function setTaskSection(section) {
+  const target = section === 'history' ? 'history' : 'conversation';
+  for (const panel of dialog.querySelectorAll('[data-task-section]')) panel.hidden = panel.dataset.taskSection !== target;
+  for (const control of dialog.querySelectorAll('.inspector-nav [data-section]')) control.setAttribute('aria-pressed', String(control.dataset.section === target));
+  dialog.querySelector('.composer')?.toggleAttribute('hidden', target !== 'conversation');
+  const thread = dialog.querySelector('#task-comments');
+  if (thread && target === 'conversation') thread.scrollIntoView({ block: 'nearest' });
 }
 
-/** Conversa como chat: mensagens e prints na ordem, juntando o que a mesma pessoa mandou em seguida. */
+/** Grava uma mudança e redesenha a ficha guardando a aba, a rolagem e o rascunho. */
+async function saveCard(id, patch, done) {
+  const card = cardById(id);
+  if (!card) return;
+  await request(`/cards/${id}`, 'PATCH', { ...patch, version: card.version });
+  await refresh();
+  if (dialog.open && dialog.querySelector('.ficha')?.dataset.card === id) rerenderCard(cardById(id));
+  if (done) message(done);
+}
+
+function rerenderCard(card) {
+  const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
+  const draft = dialog.querySelector('[name=comment]')?.value || '';
+  const scroll = dialog.querySelector('.dialog-body')?.scrollTop || 0;
+  showCard(card, undefined, false);
+  if (section) setTaskSection(section);
+  dialog.querySelector('[name=comment]').value = draft;
+  dialog.querySelector('.dialog-body').scrollTop = scroll;
+}
+
+/* ---------- Menus dos campos (popovers) ---------- */
+function closePopover() {
+  if (openPopover?.classList.contains('edit-panel')) {
+    const panel = openPopover;
+    panel.classList.add('is-leaving');
+    setTimeout(() => panel.remove(), 200);
+    editor?.querySelectorAll('.editor-option').forEach((item) => item.setAttribute('aria-current', 'false'));
+  } else openPopover?.remove();
+  openPopover = null;
+}
+
+function popoverOptions(card, prop) {
+  const option = (value, label, current, extra = '') => `<button type="button" class="pop-option" data-action="pick" data-prop="${prop}"
+    data-value="${escape(value)}" aria-pressed="${current}">${label}${extra}${current ? `<span class="pop-check">${icon('check')}</span>` : ''}</button>`;
+  if (prop === 'status') return Object.entries(stages).map(([key, label]) => option(key, `${stageDot(key)}${label}`, card.status === key)).join('');
+  if (prop === 'assignee') return option('', `<span class="card-face nobody" aria-hidden="true">${icon('user-round')}</span>Ninguém`, !card.assigneeId) +
+    board.members.map((member) => option(member.id, `${face(member, 'card-face')}${escape(member.name)}`, card.assigneeId === member.id,
+      presenceOf(member.id) ? '<span class="pop-online" title="Online agora"></span>' : '')).join('');
+  if (prop === 'priority') return [['alta', 'Urgente'], ['normal', 'Normal'], ['baixa', 'Baixa']]
+    .map(([key, label]) => option(key, `${icon('flag')}${label}`, card.priority === key)).join('');
+  if (prop === 'due') {
+    const base = new Date(`${today()}T12:00:00Z`);
+    const plus = (days) => new Date(base.getTime() + days * DAY).toISOString().slice(0, 10);
+    const monday = plus(((8 - base.getUTCDay()) % 7) || 7);
+    const quick = [['Hoje', today()], ['Amanhã', plus(1)], ['Segunda que vem', monday], ['Em 1 semana', plus(7)]];
+    return `<div class="pop-quick">${quick.map(([label, value]) => `<button type="button" class="pop-pill" data-action="pick" data-prop="due" data-value="${value}" aria-pressed="${card.due === value}">${label}</button>`).join('')}</div>
+      <div class="pop-calendar"><input type="hidden" name="due" value="${card.due || ''}"><div class="task-calendar"></div>
+      <button type="button" class="pop-clear" data-action="task-clear-day">Tirar prazo</button></div>`;
+  }
+  return `<textarea class="pop-text" maxlength="500" rows="3" placeholder="O que está travando?" aria-label="O que está travando">${escape(card.blocked)}</textarea>
+    <div class="pop-actions">${card.blocked ? `<button type="button" class="btn ghost" data-action="pick" data-prop="blocked" data-value="">${icon('play')}Destravar</button>` : ''}
+    <button type="button" class="btn primary" data-action="pick-blocked">Salvar</button></div>`;
+}
+
+function showPopover(trigger) {
+  const same = openPopover && openPopover.dataset.prop === trigger.dataset.prop;
+  closePopover();
+  if (same) return;
+  const card = cardById(trigger.dataset.card);
+  const prop = trigger.dataset.prop;
+  const pop = document.createElement('div');
+  pop.className = 'popover';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', trigger.getAttribute('aria-label'));
+  pop.dataset.prop = prop;
+  pop.dataset.card = card.id;
+  pop.innerHTML = popoverOptions(card, prop);
+  document.body.append(pop);
+  const rect = trigger.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  pop.style.left = `${Math.max(12, Math.min(innerWidth - width - 12, rect.left))}px`;
+  const below = innerHeight - rect.bottom > pop.offsetHeight + 16;
+  pop.style.top = `${below ? rect.bottom + 6 : Math.max(12, rect.top - pop.offsetHeight - 6)}px`;
+  openPopover = pop;
+  if (prop === 'due') renderTaskCalendar(pop.querySelector('.pop-calendar'), today());
+  (pop.querySelector('[aria-pressed=true]') || pop.querySelector('textarea, button'))?.focus({ preventScroll: true });
+}
+
+/* ---------- Modo editar: a ficha vai para a esquerda, as opções descem em cascata à direita ---------- */
+const EDIT_OPTIONS = [
+  ['title', 'Título', 'type'], ['description', 'Descrição', 'align-left'], ['assignee', 'Quem faz', 'user-round'],
+  ['due', 'Prazo', 'calendar-days'], ['priority', 'Prioridade', 'flag'], ['status', 'Etapa', 'circle-dashed'],
+  ['blocked', 'Travado', 'octagon-pause'], ['steps', 'Passos', 'list-checks'], ['image', 'Imagem', 'image-plus']
+];
+let editor = null;
+let editorCloseTimer;
+
+function openEditor(cardId, { pin = false, prop } = {}) {
+  clearTimeout(editorCloseTimer);
+  if (editor) {
+    if (pin) editor.dataset.mode = 'pin';
+    if (prop) openEditPanel(prop);
+    return;
+  }
+  const narrow = innerWidth < 1180;
+  editor = document.createElement('aside');
+  editor.className = 'editor-side';
+  editor.dataset.card = cardId;
+  editor.dataset.mode = pin ? 'pin' : 'peek';
+  editor.setAttribute('aria-label', 'Editar cartão');
+  editor.innerHTML = `<div class="editor-options" role="menu">${EDIT_OPTIONS.map(([key, label, glyph]) => `<button type="button" role="menuitem"
+      class="editor-option" data-action="edit-opt" data-prop="${key}" data-card="${cardId}">${icon(glyph)}<span>${label}</span></button>`).join('')}
+    <button type="button" class="editor-done" data-action="edit-close">${icon('check')}Pronto</button></div>
+    <div class="editor-stage" aria-live="polite"></div>`;
+  document.body.append(editor);
+  editor.querySelectorAll('.editor-option, .editor-done').forEach((item, index) => item.style.setProperty('--i', index));
+  document.documentElement.dataset.editing = narrow ? 'sheet' : 'side';
+  dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'true');
+  editor.addEventListener('mouseenter', () => clearTimeout(editorCloseTimer));
+  editor.addEventListener('mouseleave', () => scheduleEditorClose());
+  requestAnimationFrame(() => editor?.classList.add('is-open'));
+  if (prop) openEditPanel(prop);
+}
+
+function scheduleEditorClose() {
+  if (!editor || editor.dataset.mode === 'pin') return;
+  editorCloseTimer = setTimeout(closeEditor, 260);
+}
+
+function closeEditor() {
+  clearTimeout(editorCloseTimer);
+  if (!editor) return;
+  const leaving = editor;
+  editor = null;
+  closePopover();
+  delete document.documentElement.dataset.editing;
+  dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'false');
+  leaving.classList.remove('is-open');
+  leaving.classList.add('is-leaving');
+  setTimeout(() => leaving.remove(), 320);
+}
+
+/** O cartão da opção "explode" no palco da direita, nascendo da própria opção. */
+function openEditPanel(prop) {
+  if (!editor) return;
+  editor.dataset.mode = 'pin';
+  const card = cardById(editor.dataset.card);
+  const option = editor.querySelector(`.editor-option[data-prop="${prop}"]`);
+  for (const item of editor.querySelectorAll('.editor-option')) item.setAttribute('aria-current', String(item === option));
+  closePopover();
+  const stage = editor.querySelector('.editor-stage');
+  const panel = document.createElement('div');
+  panel.className = 'edit-panel';
+  panel.dataset.prop = prop;
+  panel.dataset.card = card.id;
+  const label = EDIT_OPTIONS.find(([key]) => key === prop)[1];
+  let body;
+  if (prop === 'title') body = `<input class="edit-input" data-edit-field="title" maxlength="160" value="${escape(card.title)}" aria-label="Título">
+    <p class="edit-hint">Enter salva</p>`;
+  else if (prop === 'description') body = `<textarea class="edit-input" data-edit-field="description" rows="6" maxlength="8000" placeholder="O que precisa ser feito…" aria-label="Descrição">${escape(card.description)}</textarea>
+    <div class="pop-actions"><button type="button" class="btn primary" data-action="edit-save-desc">Salvar</button></div>`;
+  else if (prop === 'steps') body = `<ul class="edit-steps">${card.checklist.map((item) => `<li>${icon(item.done ? 'circle-check' : 'circle')}<span>${escape(item.title)}</span></li>`).join('')}</ul>
+    <input class="edit-input" data-add-step="${card.id}" maxlength="240" placeholder="Novo passo e Enter" aria-label="Novo passo">`;
+  else if (prop === 'image') body = `<label class="edit-drop">${icon('image-plus')}<span><b>Escolher imagem</b><br>ou Ctrl+V / arraste para a ficha</span>
+    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="sr-only" data-upload="${card.id}"></label>`;
+  else body = popoverOptions(card, prop);
+  panel.innerHTML = `<p class="edit-panel-title">${label}</p>${body}`;
+  stage.replaceChildren(panel);
+  // Nasce da altura da opção escolhida.
+  const from = option.getBoundingClientRect();
+  const to = stage.getBoundingClientRect();
+  // O cartão fica na altura da opção (a linha dourada chega nele), sem passar do fim da tela.
+  const center = from.top + from.height / 2 - to.top;
+  const offset = document.documentElement.dataset.editing === 'side'
+    ? Math.max(0, Math.min(center - 26, innerHeight - to.top - panel.offsetHeight - 16)) : 0;
+  panel.style.marginTop = `${offset}px`;
+  panel.style.setProperty('--from-y', `${center - offset}px`);
+  openPopover = panel;
+  if (prop === 'due') renderTaskCalendar(panel.querySelector('.pop-calendar'), today());
+  requestAnimationFrame(() => (panel.querySelector('input:not([type=file]):not([type=hidden]), textarea, [aria-pressed=true], .pop-option') || panel)?.focus({ preventScroll: true }));
+}
+
+/** Depois de gravar, a pílula na ficha acende: o valor "pousa" lá. */
+function landValue(prop) {
+  const chip = dialog.querySelector(`.chip-prop[data-prop="${prop}"]`) ||
+    (prop === 'title' && dialog.querySelector('.title-input')) || (prop === 'description' && dialog.querySelector('.desc-input')) ||
+    (prop === 'steps' && dialog.querySelector('.ficha-steps'));
+  chip?.classList.add('just-set');
+  setTimeout(() => chip?.classList.remove('just-set'), 900);
+}
+
+async function pickValue(prop, value, cardId) {
+  const field = { status: 'status', assignee: 'assigneeId', due: 'due', priority: 'priority', blocked: 'blocked' }[prop];
+  const patch = { [field]: value === '' && (prop === 'assignee' || prop === 'due') ? null : value };
+  closePopover();
+  const messages = { status: `Etapa: ${stages[value]}.`, assignee: 'Responsável trocado.', due: value ? 'Prazo marcado.' : 'Prazo tirado.',
+    priority: 'Prioridade mudada.', blocked: value ? 'Cartão travado.' : 'Cartão destravado.' };
+  if (prop === 'status') { await placeCard(cardId, value); rerenderCard(cardById(cardId)); landValue(prop); return; }
+  await saveCard(cardId, patch, messages[prop]);
+  landValue(prop);
+}
+
 function cardActivity(card) {
   const items = [
     ...card.comments.map((item) => ({ kind: 'text', actor: item.actor, source: item.source, at: item.at, text: item.text })),
@@ -819,18 +1034,45 @@ function showToken(token, source) {
   </div>`);
 }
 
+/**
+ * Deslize: guarda onde cada cartão estava, redesenha e faz os outros escorregarem
+ * para o lugar novo (em vez de pular). Os contadores das colunas que mudaram pulsam.
+ */
+function slideCards(change, skip) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const before = new Map([...root.querySelectorAll('.card[data-id]')].map((el) => [el.dataset.id, el.getBoundingClientRect()]));
+  const counts = new Map([...root.querySelectorAll('.column')].map((el) => [el.dataset.status, el.querySelector('.count')?.textContent]));
+  change();
+  if (reduce) return;
+  for (const el of root.querySelectorAll('.card[data-id]')) {
+    const old = before.get(el.dataset.id);
+    if (!old || el.dataset.id === skip) continue;
+    const now = el.getBoundingClientRect();
+    const dx = old.left - now.left;
+    const dy = old.top - now.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+    el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 360, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+  for (const column of root.querySelectorAll('.column')) {
+    const count = column.querySelector('.count');
+    if (count && counts.get(column.dataset.status) !== count.textContent) {
+      count.animate([{ transform: 'scale(1.5)', color: 'var(--accent-hover)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.2,1.4,.4,1)' });
+    }
+  }
+}
+
 async function placeCard(id, status, dragSource) {
   const card = cardById(id);
   if (!card || status === card.status) return;
   await request(`/cards/${id}`, 'PATCH', { status, version: card.version });
   boardRevision++;
   const snapshot = await readBoard();
-  const paint = () => {
+  const paint = () => slideCards(() => {
     acceptBoard(snapshot);
     moved = dragSource ? '' : id;
     renderContents();
     moved = '';
-  };
+  }, id);
   const html = document.documentElement;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!dragSource && !reduce && document.startViewTransition && !html.hasAttribute('data-card-transition')) {
@@ -940,6 +1182,69 @@ function viewPrint(cardId, index) {
   viewer.querySelector('[data-action=close-viewer]').focus();
 }
 
+// Esc fecha a ficha (ela não é modal, para o visualizador de prints poder ficar por cima).
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !dialog.open || document.querySelector('.viewer') || event.defaultPrevented) return;
+  const menu = dialog.querySelector('.menu[open]');
+  if (menu) { menu.open = false; return; }
+  if (editor && !openPopover) { closeEditor(); dialog.querySelector('.edit-trigger')?.focus(); return; }
+  if (openPopover) { const trigger = dialog.querySelector(`[data-action=prop][data-prop="${openPopover.dataset.prop}"]`); closePopover(); trigger?.focus(); return; }
+  if (event.target.matches?.('.title-input, .desc-input')) { event.target.blur(); return; }
+  dialog.close();
+});
+
+// Passar o mouse no Editar mostra as opções; o clique fixa.
+document.addEventListener('mouseover', (event) => {
+  const trigger = event.target.closest?.('.edit-trigger');
+  if (trigger && matchMedia('(hover: hover)').matches) openEditor(trigger.dataset.card);
+});
+document.addEventListener('mouseout', (event) => {
+  const trigger = event.target.closest?.('.edit-trigger');
+  if (trigger && !trigger.contains(event.relatedTarget) && !event.relatedTarget?.closest?.('.editor-side')) scheduleEditorClose();
+});
+// Título no modo editar: Enter grava.
+document.addEventListener('keydown', async (event) => {
+  const box = event.target.closest?.('[data-edit-field=title]');
+  if (!box || event.key !== 'Enter' || !box.value.trim()) return;
+  event.preventDefault();
+  const id = openPopover.dataset.card;
+  const value = box.value.replace(/\s+/g, ' ').trim();
+  closePopover();
+  await saveCard(id, { title: value }, 'Título salvo.');
+  landValue('title');
+});
+
+// Título e descrição: escreve no lugar e grava ao sair do campo.
+document.addEventListener('input', (event) => {
+  if (event.target.matches?.('.title-input, .desc-input, .composer textarea')) autoGrow(event.target);
+});
+document.addEventListener('focusout', async (event) => {
+  const box = event.target.closest?.('[data-field]');
+  if (!box || box.readOnly) return;
+  const card = cardById(box.dataset.card);
+  const value = box.dataset.field === 'title' ? box.value.replace(/\s+/g, ' ').trim() : box.value;
+  if (!card || value === card[box.dataset.field]) return;
+  if (box.dataset.field === 'title' && !value) { box.value = card.title; return message('O cartão precisa de um título.'); }
+  try {
+    await saveCard(card.id, { [box.dataset.field]: value }, box.dataset.field === 'title' ? 'Título salvo.' : 'Descrição salva.');
+  } catch (error) { message(error.message); }
+});
+document.addEventListener('keydown', async (event) => {
+  if (event.target.matches?.('.title-input') && event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
+  const add = event.target.closest?.('[data-add-step]');
+  if (add && event.key === 'Enter' && add.value.trim()) {
+    event.preventDefault();
+    const card = cardById(add.dataset.addStep);
+    const title = add.value.trim();
+    add.value = '';
+    try {
+      const inPanel = Boolean(add.closest('.edit-panel'));
+      await saveCard(card.id, { checklist: [...card.checklist, { title, done: false }] });
+      if (inPanel) { openEditPanel('steps'); landValue('steps'); } else dialog.querySelector('[data-add-step]')?.focus();
+    } catch (error) { message(error.message); }
+  }
+});
+
 // No chat: Enter envia, Shift+Enter pula linha.
 document.addEventListener('keydown', (event) => {
   const box = event.target.closest?.('.composer textarea');
@@ -1005,6 +1310,7 @@ document.addEventListener('change', async (event) => {
 
 document.addEventListener('click', async (event) => {
   const control = event.target.closest('button[data-action]');
+  if (openPopover && !openPopover.contains(event.target) && !event.target.closest?.('[data-action=prop], .editor-side')) closePopover();
   if (!control) {
     if (event.target.classList?.contains('viewer')) event.target.remove();
     for (const menu of document.querySelectorAll('.menu[open]')) if (!menu.contains(event.target)) menu.open = false;
@@ -1030,7 +1336,7 @@ document.addEventListener('click', async (event) => {
       root.querySelector(`.figure[data-person="${next || control.dataset.person}"]`)?.focus({ preventScroll: true });
     } else if (action === 'profile') {
       root.querySelector('.profile-handle')?.click();
-    } else if (['board', 'mine', 'archive'].includes(action)) {
+    } else if (['board', 'mine', 'archive', 'context'].includes(action)) {
       navigate(action);
     } else if (action === 'filter') {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
@@ -1044,25 +1350,35 @@ document.addEventListener('click', async (event) => {
         block?.focus({ preventScroll: true });
       }
     } else if (action === 'task-section') {
-      syncOpenCard();
-      setTaskSection(control.dataset.section, control.dataset.step);
-    }
-    else if (action === 'task-step') setEditorStep(control.dataset.step);
-    else if (action === 'task-step-shift') {
-      const index = editorSteps.findIndex(([key]) => key === dialog.dataset.editorStep);
-      setEditorStep(editorSteps[index + Number(control.dataset.offset)]?.[0]);
-    }
-    else if (['task-month', 'task-day', 'task-clear-day'].includes(action)) {
-      const panel = control.closest('.editor-step');
-      const due = panel.querySelector('[name=due]');
-      if (action !== 'task-month') due.value = control.dataset.date || '';
-      renderTaskCalendar(panel, today(), Number(control.dataset.offset || 0));
-      const target = action === 'task-month' ? `[data-offset="${control.dataset.offset}"]` : '[aria-pressed=true], [aria-current=date], .calendar-day';
-      panel.querySelector(target)?.focus({ preventScroll: true });
-    }
-    else if (action === 'task-cancel') {
-      showCard(cardById(card));
-      dialog.querySelector('.inspector-edit')?.focus();
+      setTaskSection(control.dataset.section);
+    } else if (action === 'edit-mode') {
+      if (editor?.dataset.mode === 'pin') closeEditor(); else openEditor(card, { pin: true });
+    } else if (action === 'edit-opt') {
+      openEditor(card, { pin: true, prop: control.dataset.prop });
+    } else if (action === 'edit-close') {
+      closeEditor();
+      dialog.querySelector('.edit-trigger')?.focus();
+    } else if (action === 'edit-save-desc') {
+      const box = openPopover.querySelector('[data-edit-field=description]');
+      const id = openPopover.dataset.card;
+      closePopover();
+      await saveCard(id, { description: box.value }, 'Descrição salva.');
+      landValue('description');
+    } else if (action === 'prop') {
+      showPopover(control);
+    } else if (action === 'pick') {
+      await pickValue(control.dataset.prop, control.dataset.value, openPopover?.dataset.card || card);
+    } else if (action === 'pick-blocked') {
+      await pickValue('blocked', openPopover.querySelector('.pop-text').value.trim(), openPopover.dataset.card);
+    } else if (action === 'task-month') {
+      renderTaskCalendar(openPopover.querySelector('.pop-calendar'), today(), Number(control.dataset.offset));
+      openPopover.querySelector(`[data-offset="${control.dataset.offset}"]`)?.focus({ preventScroll: true });
+    } else if (action === 'task-day' || action === 'task-clear-day') {
+      await pickValue('due', control.dataset.date || '', openPopover.dataset.card);
+    } else if (action === 'remove-step') {
+      const current = cardById(card);
+      const index = Number(control.dataset.index);
+      await saveCard(card, { checklist: current.checklist.filter((_, i) => i !== index) }, 'Passo tirado.');
     } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
     else if (action === 'connect') await showConnect();
@@ -1080,9 +1396,30 @@ document.addEventListener('click', async (event) => {
       if (fromTask) showCard(cardById(card));
       else root.querySelector(`.card-title[data-card="${card}"]`)?.focus({ preventScroll: true });
     } else if (action === 'copy-text' || action === 'copy-brief') {
+      control.closest('details')?.removeAttribute('open');
       const text = action === 'copy-brief' ? agentBrief(cardById(card)) : control.dataset.text;
       await navigator.clipboard.writeText(text).catch(() => { throw new Error('Não deu para copiar. Tente de novo.'); });
       message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
+    } else if (action === 'open-notice') {
+      dismissBubble(control.closest('.bubble'));
+      openFromNotice(card);
+    } else if (action === 'close-notice') {
+      dismissBubble(control.closest('.bubble'));
+    } else if (action === 'notify-ask') {
+      await Notification.requestPermission();
+      root.querySelector('.notify-pref').innerHTML = notifyPrefButton();
+      if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
+    } else if (action === 'context-edit') {
+      await editContext(control.dataset.focus);
+    } else if (action === 'context-cancel') {
+      contextEditing = false;
+      renderContents();
+    } else if (action === 'context-link-add') {
+      const list = root.querySelector('.ctx-links-edit');
+      list.insertAdjacentHTML('beforeend', list.dataset.template);
+      list.lastElementChild.querySelector('input').focus();
+    } else if (action === 'context-link-remove') {
+      control.closest('.ctx-link-row').remove();
     } else if (action === 'set-bg') {
       board.preferences = await request('/preferences', 'PUT', { background: control.dataset.bg });
       applyBackground(board.preferences);
@@ -1103,11 +1440,7 @@ document.addEventListener('click', async (event) => {
       const index = Number(control.dataset.index);
       const checklist = current.checklist.map((item, i) => (i === index ? { ...item, done: !item.done } : item));
       control.setAttribute('aria-pressed', String(checklist[index].done));
-      await request(`/cards/${card}`, 'PATCH', { checklist, version: current.version });
-      await refresh();
-      const section = dialog.querySelector('[data-task-section]:not([hidden])')?.dataset.taskSection;
-      showCard(cardById(card));
-      if (section && section !== 'summary') setTaskSection(section);
+      await saveCard(card, { checklist });
       dialog.querySelector(`[data-action=toggle-check][data-index="${index}"]`)?.focus({ preventScroll: true });
       if (checklist.every((item) => item.done)) message('Todos os passos feitos. A águia chegou!');
     } else if (action === 'archive-card' || action === 'restore') {
@@ -1145,8 +1478,7 @@ document.addEventListener('submit', async (event) => {
   if (!kind) return;
   event.preventDefault();
   const errorNode = form.querySelector('.error');
-  const submit = event.submitter || (kind === 'edit'
-    ? dialog.querySelector('button[form=task-edit]') : form.querySelector('button:not([type=button])'));
+  const submit = event.submitter || form.querySelector('button:not([type=button])');
   errorNode.textContent = '';
   submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
@@ -1155,6 +1487,7 @@ document.addEventListener('submit', async (event) => {
       await request('/login', 'POST', { memberId: form.dataset.member, pin: data.pin });
       await refresh({ shell: true });
       autoRefresh();
+      void sendPresence();
     } else if (kind === 'change-pin') {
       if (data.newPin !== data.confirmPin) throw new Error('Os PINs novos precisam ser iguais.');
       await request('/pin', 'POST', { currentPin: data.currentPin, newPin: data.newPin });
@@ -1163,20 +1496,10 @@ document.addEventListener('submit', async (event) => {
     } else if (kind === 'new') {
       const card = await request('/cards', 'POST', data);
       view = 'board'; projectId = card.projectId; search = ''; blockedOnly = false;
-      dialog.close(); await refresh({ shell: true }); message('Cartão criado.');
-      root.querySelector(`.card-title[data-card="${card.id}"]`)?.focus();
-    } else if (kind === 'edit' || kind === 'comment') {
-      if (kind === 'edit') {
-        if (!data.title.trim()) {
-          setEditorStep('title');
-          throw new Error('Informe o título da tarefa.');
-        }
-        data.assigneeId ||= null;
-        data.due ||= null;
-        data.checklist = Array.from(form.querySelectorAll('.check-row'), (row) => ({
-          title: row.querySelector('input[type=text]').value.trim(), done: row.querySelector('input[type=checkbox]').checked
-        })).filter((item) => item.title);
-      }
+      dialog.close(); await refresh({ shell: true }); message('Cartão criado. Agora é só completar.');
+      showCard(cardById(card.id));
+      openEditor(card.id, { pin: true, prop: 'description' });
+    } else if (kind === 'comment') {
       const version = Number(form.dataset.version);
       const card = await request(`/cards/${form.dataset.card}`, 'PATCH', { ...data, version });
       await refresh();
@@ -1186,16 +1509,22 @@ document.addEventListener('submit', async (event) => {
         thread.lastElementChild?.setAttribute('data-fresh', '');
         thread.scrollTop = thread.scrollHeight;
         dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
-        const editor = dialog.querySelector('#task-edit');
-        if (Number(editor.dataset.version) === version) editor.dataset.version = card.version;
+        const ficha = dialog.querySelector('.ficha');
+        if (ficha && Number(ficha.dataset.version) === version) ficha.dataset.version = card.version;
         form.dataset.version = card.version;
         form.reset();
         form.querySelector('[name=comment]').focus();
-      } else if (kind === 'edit' && form.isConnected) {
-        showCard(card);
-        dialog.querySelector('.inspector-edit')?.focus({ preventScroll: true });
       }
-      message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
+    } else if (kind === 'context') {
+      const links = [...form.querySelectorAll('.ctx-link-row')].map((row) => ({
+        title: row.querySelector('[name=link-title]').value.trim(), url: row.querySelector('[name=link-url]').value.trim()
+      })).filter((link) => link.title || link.url).map((link) => ({ ...link, title: link.title || link.url }));
+      const body = { links };
+      for (const key of ['resumo', 'objetivo', 'regras', 'decisoes', 'stack']) body[key] = form.elements[key].value;
+      await request(`/projects/${form.dataset.project}/context`, 'PUT', body);
+      contextEditing = false;
+      renderContents();
+      message('Contexto salvo. Os assistentes já leem a versão nova.');
     } else if (kind === 'token') {
       const { token } = await request('/tokens', 'POST', data);
       showToken(token, data.source);
@@ -1235,23 +1564,22 @@ document.addEventListener('input', (event) => {
   if (event.target.id === 'search') { search = event.target.value; renderContents(); }
 });
 document.addEventListener('change', (event) => {
-  if (event.target.id === 'project') { projectId = event.target.value; renderContents(); }
+  if (event.target.id === 'project') { projectId = event.target.value; contextEditing = false; renderContents(); }
 });
 document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !dialog.open) {
     const input = document.querySelector('#search');
     if (input) { event.preventDefault(); input.focus(); }
   }
-  if (event.key === 'Escape' && dialog.open && dialog.classList.contains('task-dialog')) {
-    dialog.close();
-    return;
-  }
   if (event.key === 'Escape' && document.activeElement.closest('.menu[open]')) {
     const menu = document.activeElement.closest('.menu[open]');
     menu.open = false; menu.querySelector('summary').focus();
   }
 });
+document.addEventListener('dragend', () => root.querySelectorAll('.card.lifted').forEach((el) => el.classList.remove('lifted')));
 document.addEventListener('dragstart', (event) => {
+  const lifted = event.target.closest?.('.card');
+  if (lifted) requestAnimationFrame(() => lifted.classList.add('lifted'));
   const card = event.target.closest('.card[draggable]');
   if (card && event.target === card) {
     dragged = card.dataset.id;
@@ -1285,39 +1613,186 @@ document.addEventListener('drop', (event) => {
 });
 
 function syncOpenCard() {
-  const editor = dialog.open && dialog.querySelector('#task-edit');
-  if (!editor) return;
-  const card = cardById(editor.dataset.card);
-  if (!card || card.version === Number(editor.dataset.version)) return;
-
-  const composer = dialog.querySelector('[data-form=comment]');
-  const textarea = composer.elements.comment;
-  const section = dialog.querySelector('[data-task-section]:not([hidden])').dataset.taskSection;
+  const ficha = dialog.open && dialog.querySelector('.ficha');
+  if (!ficha) return;
+  const card = cardById(ficha.dataset.card);
+  if (!card || card.version === Number(ficha.dataset.version)) return;
   const thread = dialog.querySelector('#task-comments');
   const atBottom = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 24;
-  if (card.version !== Number(composer.dataset.version) && !composer.querySelector('button:disabled')) {
+  const active = document.activeElement;
+  const typing = (dialog.contains(active) && active.matches('input, textarea')) || openPopover || document.querySelector('.viewer') ||
+    dialog.querySelector('.composer button:disabled');
+  if (typing) {
+    // Só a conversa e o histórico se atualizam enquanto a pessoa digita.
     thread.innerHTML = cardActivity(card);
     if (atBottom) thread.scrollTop = thread.scrollHeight;
     dialog.querySelector('#task-history-list').innerHTML = cardHistory(card);
-    composer.dataset.version = card.version;
+    return;
   }
-  const active = document.activeElement;
-  const inputFocused = dialog.contains(active) && active.matches('input, textarea, select');
-  if (section === 'edit' || inputFocused ||
-      dialog.querySelector('.print-add[data-busy], .composer button:disabled') || document.querySelector('.viewer')) return;
-
-  const focusedSection = dialog.contains(active) ? active.dataset.section : null;
-  const draft = textarea.value;
-  const scroll = dialog.querySelector('.dialog-body').scrollTop;
-  const threadScroll = thread.scrollTop;
-  showCard(card, undefined, dialog.contains(active));
-  setTaskSection(section);
-  dialog.querySelector('[name=comment]').value = draft;
-  dialog.querySelector('.dialog-body').scrollTop = scroll;
-  const nextThread = dialog.querySelector('#task-comments');
-  nextThread.scrollTop = atBottom ? nextThread.scrollHeight : threadScroll;
-  if (focusedSection) dialog.querySelector(`.inspector-nav [data-section="${focusedSection}"]`)?.focus({ preventScroll: true });
+  rerenderCard(card);
 }
+
+/* ---------- Quem está online ---------- */
+let online = [];
+let presenceTimer;
+const openCardId = () => (dialog.open ? dialog.querySelector('[data-form=comment]')?.dataset.card || null : null);
+const presenceOf = (id) => online.find((item) => item.id === id && Date.now() - item.at < 45000);
+
+async function sendPresence() {
+  clearTimeout(presenceTimer);
+  if (!board) return;
+  try {
+    online = await request('/presence', 'POST', { view, cardId: openCardId(), away: document.hidden });
+    paintPresence();
+  } catch { /* sem internet: tenta no próximo sinal */ }
+  presenceTimer = setTimeout(sendPresence, document.hidden ? 30000 : 15000);
+}
+
+function presenceLabel(member) {
+  const here = presenceOf(member.id);
+  if (!here) return '';
+  if (here.away) return 'Com o quadro em outra aba';
+  const card = here.cardId && cardById(here.cardId);
+  return card ? `Vendo ${card.key || card.title}` : { context: 'Lendo o contexto', mine: 'Nas tarefas dele', archive: 'No arquivo' }[here.view] || 'No quadro agora';
+}
+
+/** Atualiza só as bolinhas e o "quem mais está aqui", sem redesenhar o quadro. */
+function paintPresence() {
+  for (const figure of root.querySelectorAll('.figure[data-person]')) {
+    const member = board.members.find((item) => item.id === figure.dataset.person);
+    const here = member && member.id !== board.user.id ? presenceOf(member.id) : null;
+    const isMe = member?.id === board.user.id;
+    figure.dataset.online = here ? (here.away ? 'away' : 'true') : isMe ? 'true' : 'false';
+    const label = isMe ? 'Você, agora' : presenceLabel(member);
+    figure.querySelector('.figure-presence').textContent = label;
+    figure.title = label || `${member?.name} não está no quadro agora`;
+  }
+  const slot = dialog.open && dialog.querySelector('.task-viewers');
+  if (slot) {
+    const others = board.members.filter((member) => member.id !== board.user.id && presenceOf(member.id)?.cardId === openCardId());
+    slot.innerHTML = others.length ? `<span class="viewers-faces">${others.map((member) => face(member, 'card-face')).join('')}</span>
+      <span>${others.map((member) => escape(member.name.split(' ')[0])).join(' e ')} também ${others.length === 1 ? 'está' : 'estão'} aqui</span>` : '';
+  }
+}
+
+/* ---------- Avisos: balão na tela e notificação do navegador ---------- */
+let unread = 0;
+const baseTitle = document.title;
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function notifyPrefButton() {
+  if (!('Notification' in window)) return '<p class="notify-note">Este navegador não mostra avisos fora da aba.</p>';
+  if (Notification.permission === 'granted') return `<p class="notify-note is-on">${icon('bell-ring')}Avisos fora da aba ligados</p>`;
+  if (Notification.permission === 'denied') return '<p class="notify-note">Avisos bloqueados no navegador. Libere nas configurações do site.</p>';
+  return button('Avisar quando eu estiver em outra aba', 'notify-ask', 'bell', 'ghost notify-ask');
+}
+
+/** O que mudou para mim entre duas leituras do quadro. */
+function detectNews(before, after) {
+  if (!before || !after) return;
+  const me = after.user;
+  const first = me.name.split(' ')[0];
+  const mention = new RegExp(`(^|[^\\p{L}])@?${escapeRegExp(first)}(?![\\p{L}])`, 'iu');
+  const previous = new Map([...before.cards, ...before.archive].map((card) => [card.id, card]));
+  for (const card of after.cards) {
+    const old = previous.get(card.id);
+    const seen = old ? old.comments.length : card.comments.length;
+    const talkedBefore = card.comments.slice(0, seen).some((item) => item.actor === me.name);
+    for (const item of card.comments.slice(seen)) {
+      if (item.actor === me.name && item.source === 'Web') continue;
+      if (card.assigneeId === me.id || talkedBefore || mention.test(item.text)) {
+        notify({ card, who: item.actor, source: item.source, text: item.text, kind: 'mensagem' });
+      }
+    }
+    const last = card.history.at(-1);
+    if (old && old.assigneeId !== me.id && card.assigneeId === me.id && !(last.actor === me.name && last.source === 'Web')) {
+      notify({ card, who: last.actor, source: last.source, text: `Passou ${card.key || 'um cartão'} para você.`, kind: 'cartão' });
+    }
+  }
+}
+
+function openFromNotice(cardId) {
+  const card = cardById(cardId);
+  if (!card) return;
+  showCard(card);
+  setTaskSection('conversation');
+}
+
+function notify(news) {
+  const who = memberNamed(news.who);
+  const by = AGENTS.includes(news.source) ? `${news.who} pelo ${news.source}` : news.who;
+  if (document.hidden) {
+    unread++;
+    document.title = `(${unread}) ${baseTitle}`;
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const shown = new Notification(`${by} · ${news.card.key || news.card.title}`, {
+        body: news.text.slice(0, 160), icon: '/aguia-dourada.svg', tag: `${news.card.id}-${news.kind}`
+      });
+      shown.onclick = () => { window.focus(); openFromNotice(news.card.id); shown.close(); };
+    }
+    return;
+  }
+  showBubble(news, who, by);
+}
+
+/** Balão de fala que sai do avatar de quem mandou (ou do canto, se o mural não estiver à vista). */
+function showBubble(news, who, by) {
+  const stack = document.querySelector('.bubbles') || document.body.appendChild(Object.assign(document.createElement('div'), { className: 'bubbles' }));
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.setAttribute('role', 'status');
+  bubble.innerHTML = `${face(who, 'card-face')}
+    <div class="bubble-body"><p class="bubble-by"><b>${escape(by)}</b> em ${escape(news.card.key || '')} ${escape(news.card.title.slice(0, 40))}</p>
+      <p class="bubble-text">${escape(news.text.slice(0, 140))}${news.text.length > 140 ? '…' : ''}</p></div>
+    <button type="button" class="bubble-open" data-action="open-notice" data-card="${news.card.id}">Abrir</button>
+    <button type="button" class="bubble-close" data-action="close-notice" aria-label="Fechar aviso">${icon('x')}</button>`;
+  // 1º o próprio cartão que recebeu a mensagem; se ele não estiver à vista, o avatar de quem mandou; senão, o canto.
+  const cardEl = root.querySelector(`.card[data-id="${news.card.id}"]`);
+  const cardRect = cardEl?.getBoundingClientRect();
+  const figure = view === 'board' && root.querySelector(`.figure[data-person="${board.members.find((member) => member.name === news.who)?.id}"] .figure-stage`);
+  const stageRect = figure?.getBoundingClientRect();
+  const width = Math.min(340, innerWidth - 24);
+  let anchor = null;
+  if (cardRect && cardRect.bottom > 70 && cardRect.top < innerHeight - 40) {
+    const below = innerHeight - cardRect.bottom > 170;
+    anchor = { center: cardRect.left + Math.min(cardRect.width / 2, 120), y: below ? cardRect.bottom + 10 : cardRect.top - 10, above: !below };
+    cardEl.classList.add('has-news');
+    setTimeout(() => cardEl.classList.remove('has-news'), 2400);
+  } else if (stageRect && stageRect.bottom > 70 && stageRect.top < innerHeight - 160) {
+    const figureRect = figure.closest('.figure').getBoundingClientRect();
+    anchor = { center: stageRect.left + stageRect.width / 2, y: figureRect.bottom + 10, above: false };
+    figure.closest('.figure').classList.add('talking');
+    setTimeout(() => figure.closest('.figure')?.classList.remove('talking'), 900);
+  }
+  if (anchor) {
+    bubble.classList.add('is-anchored');
+    if (anchor.above) bubble.classList.add('is-above');
+    document.body.append(bubble);
+    const left = Math.max(12, Math.min(innerWidth - width - 12, anchor.center - width / 2));
+    bubble.style.setProperty('--x', `${left}px`);
+    bubble.style.setProperty('--y', `${anchor.y}px`);
+    bubble.style.setProperty('--tail', `${anchor.center - left}px`);
+    // Rolar o quadro leva o balão junto com o cartão.
+    const follow = () => {
+      if (!bubble.isConnected || !cardEl?.isConnected) return window.removeEventListener('scroll', follow);
+      const r = cardEl.getBoundingClientRect();
+      bubble.style.setProperty('--y', `${anchor.above ? r.top - 10 : r.bottom + 10}px`);
+    };
+    if (cardRect) window.addEventListener('scroll', follow, { passive: true });
+  } else stack.prepend(bubble);
+  const timer = setTimeout(() => dismissBubble(bubble), 8000);
+  bubble.addEventListener('mouseenter', () => clearTimeout(timer), { once: true });
+}
+
+function dismissBubble(bubble) {
+  if (!bubble?.isConnected) return;
+  bubble.classList.add('leaving');
+  setTimeout(() => bubble.remove(), 260);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && unread) { unread = 0; document.title = baseTitle; }
+});
 
 const boardSyncDelay = 3000;
 let autoTimer;
@@ -1326,6 +1801,8 @@ let nextActivityRender = 0;
 
 function stopBoardSync() {
   clearTimeout(autoTimer);
+  clearTimeout(presenceTimer);
+  online = [];
   board = null;
   boardTag = null;
   boardRevision++;
@@ -1338,9 +1815,10 @@ function endBoardSession() {
   void login();
 }
 
+/** Em outra aba continua buscando, mais devagar, para os avisos do navegador chegarem. */
 function autoRefresh(delay = boardSyncDelay) {
   clearTimeout(autoTimer);
-  if (board && !document.hidden) autoTimer = setTimeout(syncBoard, delay);
+  if (board) autoTimer = setTimeout(syncBoard, document.hidden ? Math.max(delay, 20000) : delay);
 }
 
 function boardIsBusy() {
@@ -1349,17 +1827,19 @@ function boardIsBusy() {
 }
 
 async function syncBoard() {
-  if (!board || document.hidden || syncingBoard) return;
+  if (!board || syncingBoard) return;
   let delay = boardSyncDelay;
   syncingBoard = true;
   const revision = boardRevision;
   try {
     if (boardIsBusy()) return;
     const snapshot = await readBoard(boardTag, AbortSignal.timeout(10000));
-    if (!board || revision !== boardRevision || document.hidden || boardIsBusy()) return;
+    if (!board || revision !== boardRevision || boardIsBusy()) return;
     if (snapshot) {
       const { projects, preferences } = board;
+      const before = board;
       acceptBoard(snapshot);
+      detectNews(before, board);
       const headingChanged = JSON.stringify(projects) !== JSON.stringify(board.projects);
       if (headingChanged) updateProjectHeading();
       if (JSON.stringify(preferences) !== JSON.stringify(board.preferences)) {
@@ -1382,7 +1862,7 @@ async function syncBoard() {
   }
 }
 
-document.addEventListener('visibilitychange', () => autoRefresh(0));
+document.addEventListener('visibilitychange', () => { autoRefresh(0); void sendPresence(); });
 window.addEventListener('online', () => autoRefresh(0));
 
 async function start() {
@@ -1390,6 +1870,7 @@ async function start() {
     if (!(await request('/session')).signedIn) return login();
     await refresh({ shell: true });
     autoRefresh();
+    void sendPresence();
   }
   catch (error) {
     if (error.status === 401) login();

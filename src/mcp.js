@@ -20,6 +20,13 @@ export async function serveMcp(req, res, store, actor) {
   }
 
   add('listar_projetos', 'Lista os projetos e seus IDs.', {}, true, store.projects);
+  add('ver_contexto_projeto', 'Lê o contexto do projeto (o que é, objetivo atual, regras de trabalho, stack, decisões e links). Leia antes de começar qualquer tarefa do projeto.',
+    { projectId: z.uuid() }, true, ({ projectId }) => store.projectContext(projectId));
+  add('atualizar_contexto_projeto', 'Atualiza seções do contexto do projeto (resumo, objetivo, regras, stack, decisoes, links). Só mande as seções que mudaram; registre decisões importantes em decisoes.',
+    { projectId: z.uuid(), resumo: z.string().max(12000).optional(), objetivo: z.string().max(12000).optional(),
+      regras: z.string().max(12000).optional(), stack: z.string().max(12000).optional(), decisoes: z.string().max(12000).optional(),
+      links: z.array(z.object({ title: z.string(), url: z.string() })).max(30).optional() },
+    false, ({ projectId, ...patch }) => store.setProjectContext(projectId, patch, actor));
   add('listar_membros', 'Lista responsáveis disponíveis e seus IDs.', {}, true, store.members);
   add('listar_tarefas', 'Lista tarefas ativas. Use minhas=true para ver as atribuídas à pessoa conectada.',
     { projectId: z.uuid().optional(), minhas: z.boolean().optional(), blocked: z.boolean().optional(), archived: z.boolean().optional() },

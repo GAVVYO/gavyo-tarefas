@@ -62,13 +62,23 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 5);
+  assert.equal((await client.listTools()).tools.length, 7);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
     assert.ok(!result.isError, JSON.stringify(result));
     return JSON.parse(result.content[0].text);
   }
+
+  // Contexto do projeto: o assistente lê e escreve; a tela vê quem mexeu e por qual canal.
+  const context = await call('atualizar_contexto_projeto', { projectId: project.id, objetivo: 'Publicar o quadro' });
+  assert.equal(context.updated.source, 'Codex');
+  assert.equal((await call('ver_contexto_projeto', { projectId: project.id })).objetivo, 'Publicar o quadro');
+  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { regras: 'Sempre abrir PR.' } });
+  assert.equal(viaWeb.status, 200);
+  assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
+  assert.equal(viaWeb.body.updated.source, 'Web');
+  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {
@@ -237,4 +247,30 @@ test('cada cartão ganha um número do projeto (GA-1, GA-2) e cartões antigos s
   const numbered = (await store.listCards()).find((card) => card.id === legacy.id);
   assert.equal(numbered.key, 'GA-3');
   await database.close();
+});
+
+test('presença: quem mandou sinal aparece como online, com a tela e o cartão que está vendo', async (t) => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const server = createApp(store).listen(0, '127.0.0.1');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await database.close();
+  });
+  await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const enter = async (name) => {
+    const member = await store.createMember({ name });
+    const r = await fetch(origin + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId: member.id, pin: '1234' }) });
+    return { member, cookie: r.headers.get('set-cookie').split(';')[0] };
+  };
+  const felipe = await enter('Felipe');
+  const bola = await enter('Bola');
+  const ping = (who, body) => fetch(origin + '/api/presence', { method: 'POST', headers: { cookie: who.cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const cardId = crypto.randomUUID();
+  assert.equal((await ping(bola, { view: 'board', cardId })).status, 200);
+  const list = await (await ping(felipe, { view: 'context' })).json();
+  assert.deepEqual(list.map((item) => item.id).sort(), [felipe.member.id, bola.member.id].sort());
+  assert.equal(list.find((item) => item.id === bola.member.id).cardId, cardId);
+  assert.equal((await fetch(origin + '/api/presence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
 });
