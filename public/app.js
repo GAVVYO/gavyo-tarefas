@@ -424,7 +424,7 @@ function muralTemplate(scoped) {
     return `<li><button type="button" class="figure" data-action="person" data-person="${member.id}"
       aria-pressed="${person === member.id}" data-stuck="${stuck > 0}" data-free="${!doing && !todo}">
       <span class="figure-stage">
-        ${art ? `<img class="figure-art" src="/api/avatar-assets/${art}.png" alt="" loading="lazy" draggable="false">`
+        ${art ? `<img class="figure-art" src="/api/avatar-assets/${art}.png" alt="" loading="lazy" decoding="async" draggable="false">`
           : `<span class="figure-initials" aria-hidden="true">${escape(initialsOf(member.name))}</span>`}
         ${agents.length ? `<span class="figure-agent" data-live="${live}" title="${live ? `${agents.join(' e ')} está trabalhando pela pessoa agora` : `${agents.join(' e ')} trabalhou pela pessoa hoje`}">${icon('bot')}<span class="sr-only">${agents.join(' e ')} trabalhou hoje</span></span>` : ''}
       </span>
@@ -536,6 +536,10 @@ async function editContext(focusKey) {
   (content.querySelector(`[name="${focusKey}"]`) || (focusKey === 'links' && content.querySelector('[name=link-title]')) || content.querySelector('textarea'))?.focus();
 }
 
+/** Último desenho do quadro e do mural: se nada mudou, não redesenha. */
+let lastBoard = {};
+let lastMural = {};
+
 function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
@@ -574,9 +578,11 @@ function renderContents() {
     return;
   }
   const slot = document.querySelector('#mural-slot');
-  if (slot) slot.innerHTML = view === 'board' ? muralTemplate(scoped) : '';
+  // Só troca o que mudou: redesenhar o mural recarrega as imagens da equipe.
+  const muralHtml = view === 'board' ? muralTemplate(scoped) : '';
+  if (slot && (lastMural.el !== slot || lastMural.html !== muralHtml)) { slot.innerHTML = muralHtml; lastMural = { el: slot, html: muralHtml }; }
   if (slot && view === 'board') paintPresence();
-  content.innerHTML = `<div class="board">${Object.entries(stages).map(([key, label]) => {
+  const boardHtml = `<div class="board">${Object.entries(stages).map(([key, label]) => {
     const inStage = cards.filter((card) => card.status === key);
     return `<section class="column" data-status="${key}" aria-label="${label}">
       <div class="column-head"><span class="stage-icon">${icon(stageIcons[key])}</span><h2>${label}</h2>
@@ -585,6 +591,9 @@ function renderContents() {
       <div class="cards">${inStage.map(cardTemplate).join('') || `<p class="empty">${emptyText}</p>`}</div>
     </section>`;
   }).join('')}</div>`;
+  if (lastBoard.el === content && lastBoard.html === boardHtml && content.querySelector('.board')) return;
+  content.innerHTML = boardHtml;
+  lastBoard = { el: content, html: boardHtml };
   paintTrails(content);
 }
 
