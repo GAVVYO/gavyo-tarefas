@@ -1093,12 +1093,12 @@ function showCard(card, origin, focus = true) {
       ${card.checklist.length ? `<div class="steps-head"><span>Passos</span><span class="trail-count">${done}/${card.checklist.length}</span></div>
         <div class="trail" data-progress="${done / card.checklist.length}" data-full="${done === card.checklist.length}" aria-hidden="true"><span class="trail-line"></span><img class="trail-hawk" src="/aguia-dourada.svg" alt=""></div>` : ''}
       <ul class="steps">${card.checklist.map((item, index) => `<li class="step-row"><button type="button" class="step" data-action="toggle-check"
-        data-card="${card.id}" data-index="${index}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
+        data-card="${card.id}" data-index="${index}" data-step="${item.id}" aria-pressed="${item.done}" ${card.archived ? 'disabled' : ''}>
         <span class="step-box" aria-hidden="true">${icon('check')}</span><span class="step-title">${escape(item.title)}</span>${item.details || item.pr ? `<span class="step-has-details">${icon('file-text')}<span class="sr-only">tem detalhes</span></span>` : ''}</button>
         <button type="button" class="step-remove step-more" data-action="step-details" data-step="${item.id}" aria-expanded="${openSteps.has(item.id)}"
           aria-controls="step-${item.id}" aria-label="Detalhes do passo ${escape(item.title)}">${icon('chevron-down')}</button>
-        ${card.archived ? '' : `<button type="button" class="step-remove step-edit" data-action="edit-step" data-card="${card.id}" data-index="${index}" aria-label="Corrigir passo ${escape(item.title)}">${icon('pencil')}</button>`}
-        ${card.archived ? '' : `<button type="button" class="step-remove" data-action="remove-step" data-card="${card.id}" data-index="${index}" aria-label="Tirar passo ${escape(item.title)}">${icon('x')}</button>`}
+        ${card.archived ? '' : `<button type="button" class="step-remove step-edit" data-action="edit-step" data-card="${card.id}" data-index="${index}" data-step="${item.id}" aria-label="Corrigir passo ${escape(item.title)}">${icon('pencil')}</button>`}
+        ${card.archived ? '' : `<button type="button" class="step-remove" data-action="remove-step" data-card="${card.id}" data-index="${index}" data-step="${item.id}" aria-label="Tirar passo ${escape(item.title)}">${icon('x')}</button>`}
         <div class="step-details" id="step-${item.id}" ${openSteps.has(item.id) ? '' : 'hidden'}>
           <textarea data-step-field="details" data-card="${card.id}" data-step="${item.id}" rows="3" maxlength="4000"
             aria-label="Detalhes de ${escape(item.title)}" placeholder="Como reproduzir, causa e correção…" ${card.archived ? 'readonly' : ''}>${escape(item.details)}</textarea>
@@ -1144,31 +1144,59 @@ function setTaskSection(section) {
 /** Passos com os detalhes abertos: sobrevivem ao redesenho da ficha. */
 const openSteps = new Set();
 
+const sameText = (a, b) => (typeof a === 'string' ? a.replace(/\r\n?/g, '\n') : a) === (typeof b === 'string' ? b.replace(/\r\n?/g, '\n') : b);
+
+/** Redesenha a ficha com o cartão atual (mostra o valor novo depois de um conflito). */
+function showLatest(cardId) {
+  const now = cardById(cardId);
+  if (now && dialog.open && dialog.querySelector('.ficha')?.dataset.card === cardId) rerenderCard(now);
+}
+
 /**
  * Mexe num passo só (PATCH/DELETE) ou acrescenta um (POST, sem stepId).
- * Se o cartão mudou em outro ponto, relê e grava de novo; só recusa se mudaram o mesmo campo do mesmo passo.
+ * `seen` é o que a tela mostrava nos campos mudados: só recusa se outra pessoa mudou o mesmo campo do mesmo passo.
+ * Se o cartão mudou em outro ponto, grava por cima da versão nova.
  */
-async function saveStep(cardId, stepId, patch, done, method = 'PATCH') {
-  const card = cardById(cardId);
-  if (!card) return;
+/**
+ * Redesenha a ficha depois de gravar, sem atrapalhar quem digita: se o campo focado tem texto ainda não gravado,
+ * espera (o syncOpenCard redesenha quando a pessoa sair); senão redesenha e devolve o foco ao mesmo campo.
+ */
+function redrawKeepingFocus(cardId) {
+  const now = cardById(cardId);
+  if (!now || !dialog.open || dialog.querySelector('.ficha')?.dataset.card !== cardId) return;
+  const active = document.activeElement;
+  const field = dialog.contains(active) && active.matches('input, textarea') ? active : null;
+  if (field && field.value !== field.defaultValue) return;
+  const selector = field && (field.dataset.stepField ? `[data-step-field="${field.dataset.stepField}"][data-step="${field.dataset.step}"]`
+    : field.dataset.addStep ? '.ficha [data-add-step]' : field.dataset.field ? `[data-field="${field.dataset.field}"]` : null);
+  rerenderCard(now);
+  if (selector) dialog.querySelector(selector)?.focus({ preventScroll: true });
+}
+
+async function saveStep(cardId, stepId, patch, done, method = 'PATCH', seen = {}) {
+  if (!cardById(cardId)) return;
   const path = `/cards/${cardId}/steps${stepId ? `/${stepId}` : ''}`;
+  const check = () => {
+    if (!stepId) return;
+    const now = cardById(cardId)?.checklist.find((item) => item.id === stepId);
+    if (!now) { showLatest(cardId); throw Object.assign(new Error('Esse passo foi tirado agora há pouco.'), { status: 404 }); }
+    const clash = Object.keys(patch).some((key) => key in seen && !sameText(now[key], seen[key]) && !sameText(now[key], patch[key]));
+    if (clash) {
+      showLatest(cardId);
+      throw Object.assign(new Error('Alguém mudou esse mesmo campo agora há pouco. Veja o valor novo e, se precisar, mude de novo.'), { status: 409 });
+    }
+  };
+  check(); // o quadro pode ter chegado novo sem a ficha ter sido redesenhada
   try {
-    await request(path, method, { ...patch, version: card.version });
+    await request(path, method, { ...patch, version: cardById(cardId).version });
   } catch (error) {
     if (error.status !== 409) throw error;
     await refresh();
-    if (stepId) {
-      const before = card.checklist.find((item) => item.id === stepId);
-      const now = cardById(cardId)?.checklist.find((item) => item.id === stepId);
-      if (!now) throw Object.assign(new Error('Esse passo foi tirado agora há pouco.'), { status: 404 });
-      if (Object.keys(patch).some((key) => before?.[key] !== now[key])) {
-        throw Object.assign(new Error('Alguém mudou esse mesmo campo agora há pouco. Veja o valor novo e, se precisar, mude de novo.'), { status: 409 });
-      }
-    }
+    check();
     await request(path, method, { ...patch, version: cardById(cardId).version });
   }
   await refresh();
-  if (dialog.open && dialog.querySelector('.ficha')?.dataset.card === cardId) rerenderCard(cardById(cardId));
+  redrawKeepingFocus(cardId);
   if (done) message(done);
 }
 
@@ -1631,12 +1659,14 @@ document.addEventListener('focusout', async (event) => {
   const box = event.target.closest?.('[data-step-field]');
   if (!box || box.readOnly) return;
   const field = box.dataset.stepField;
-  const step = cardById(box.dataset.card)?.checklist.find((item) => item.id === box.dataset.step);
+  const shown = field === 'pr' ? box.defaultValue.trim() : box.defaultValue;
   const value = field === 'pr' ? box.value.trim() : box.value;
-  if (!step || value === (step[field] || '')) return;
+  // Compara com o que a tela mostrava, não com o quadro (que pode ter chegado novo sem redesenhar).
+  if (value === shown) return;
   if (field === 'pr' && value && !/^https?:\/\/\S+$/i.test(value)) return message('O link do PR precisa começar com http:// ou https://.');
   try {
-    await saveStep(box.dataset.card, step.id, { [field]: value }, field === 'pr' ? 'Link do PR salvo.' : 'Detalhes salvos.');
+    await saveStep(box.dataset.card, box.dataset.step, { [field]: value }, field === 'pr' ? 'Link do PR salvo.' : 'Detalhes salvos.', 'PATCH', { [field]: shown });
+    if (box.isConnected) box.defaultValue = box.value;
   } catch (error) { message(error.message); }
 });
 document.addEventListener('keydown', async (event) => {
@@ -1658,10 +1688,10 @@ document.addEventListener('keydown', async (event) => {
 /** Corrigir o texto de um passo: Enter ou sair do campo salva, Esc desiste. */
 function editStep(control) {
   const card = cardById(control.dataset.card);
-  const index = Number(control.dataset.index);
   const row = control.closest('.step-row');
+  const shown = row?.querySelector('.step-title')?.textContent ?? '';
   if (!card || !row || row.querySelector('.step-input')) return;
-  const input = Object.assign(document.createElement('input'), { className: 'step-input', value: card.checklist[index].title, maxLength: 240 });
+  const input = Object.assign(document.createElement('input'), { className: 'step-input', value: shown, maxLength: 240 });
   input.setAttribute('aria-label', 'Texto do passo');
   row.querySelector('.step').hidden = true;
   row.prepend(input);
@@ -1672,9 +1702,9 @@ function editStep(control) {
     if (done) return;
     done = true;
     const title = input.value.trim();
-    if (!save || !title || title === card.checklist[index].title) { input.remove(); row.querySelector('.step').hidden = false; control.focus(); return; }
+    if (!save || !title || title === shown) { input.remove(); row.querySelector('.step').hidden = false; control.focus(); return; }
     try {
-      await saveStep(card.id, card.checklist[index].id, { title }, 'Passo corrigido.');
+      await saveStep(card.id, control.dataset.step, { title }, 'Passo corrigido.', 'PATCH', { title: shown });
     } catch (error) { message(error.message); input.remove(); row.querySelector('.step').hidden = false; }
   };
   input.addEventListener('keydown', (event) => {
@@ -1821,9 +1851,8 @@ document.addEventListener('click', async (event) => {
       control.setAttribute('aria-expanded', String(opening));
       if (opening) { openSteps.add(control.dataset.step); panel.querySelector('textarea').focus(); } else openSteps.delete(control.dataset.step);
     } else if (action === 'remove-step') {
-      const step = cardById(card).checklist[Number(control.dataset.index)];
-      openSteps.delete(step.id);
-      await saveStep(card, step.id, {}, 'Passo tirado.', 'DELETE');
+      openSteps.delete(control.dataset.step);
+      await saveStep(card, control.dataset.step, {}, 'Passo tirado.', 'DELETE');
     } else if (action === 'close') dialog.close();
     else if (action === 'admin') showAdmin();
     else if (action === 'connect') await showConnect();
@@ -1918,11 +1947,12 @@ document.addEventListener('click', async (event) => {
       if (dialog.open) showCard(cardById(card));
       message('Print tirado do cartão.');
     } else if (action === 'toggle-check') {
-      const index = Number(control.dataset.index);
-      const step = cardById(card).checklist[index];
-      control.setAttribute('aria-pressed', String(!step.done));
-      await saveStep(card, step.id, { done: !step.done });
-      dialog.querySelector(`[data-action=toggle-check][data-index="${index}"]`)?.focus({ preventScroll: true });
+      const shown = control.getAttribute('aria-pressed') === 'true';
+      control.setAttribute('aria-pressed', String(!shown));
+      try {
+        await saveStep(card, control.dataset.step, { done: !shown }, undefined, 'PATCH', { done: shown });
+      } catch (error) { control.setAttribute('aria-pressed', String(shown)); throw error; }
+      dialog.querySelector(`[data-action=toggle-check][data-step="${control.dataset.step}"]`)?.focus({ preventScroll: true });
       if (cardById(card).checklist.every((item) => item.done)) message('Todos os passos feitos. A águia chegou!');
     } else if (action === 'archive-card' || action === 'restore') {
       const fromTask = dialog.open && dialog.contains(control);
