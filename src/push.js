@@ -46,13 +46,11 @@ export function createPush({ query, store, subject = process.env.PUBLIC_ORIGIN |
     await query('DELETE FROM push_subscriptions WHERE id = ? AND member_id = ?', [idOf(String(endpoint || '')), memberId]);
   }
 
-  async function sendTo(memberIds, payload) {
-    const ids = [...new Set(memberIds)].filter(Boolean);
-    if (!ids.length) return 0;
+  async function deliver(rows, payload, label) {
     const { publicKey, privateKey } = await keys();
-    const rows = await query(`SELECT id, data FROM push_subscriptions WHERE member_id IN (${ids.map(() => '?').join(',')})`, ids);
     const body = JSON.stringify(payload);
     let sent = 0;
+    const failures = [];
     await Promise.all(rows.map(async (row) => {
       try {
         await send(JSON.parse(row.data), body, { TTL: 3600, urgency: 'high', vapidDetails: { subject, publicKey, privateKey } });
@@ -60,18 +58,35 @@ export function createPush({ query, store, subject = process.env.PUBLIC_ORIGIN |
       } catch (error) {
         // Aparelho que desinstalou ou revogou: some da lista.
         if (error.statusCode === 404 || error.statusCode === 410) await query('DELETE FROM push_subscriptions WHERE id = ?', [row.id]);
-        else console.error('Aviso não enviado:', error.statusCode || error.message);
+        failures.push(error.statusCode || error.code || error.message);
       }
     }));
-    return sent;
+    console.log(`Aviso (${label}): ${sent} de ${rows.length} aparelho(s)${failures.length ? `; falhas: ${failures.join(', ')}` : ''}`);
+    return { devices: rows.length, sent, failures };
+  }
+
+  const rowsFor = (ids) => query(`SELECT id, data FROM push_subscriptions WHERE member_id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  async function sendTo(memberIds, payload, label = 'envio') {
+    const ids = [...new Set(memberIds)].filter(Boolean);
+    if (!ids.length) return 0;
+    return (await deliver(await rowsFor(ids), payload, label)).sent;
+  }
+
+  /** Aviso de teste para a própria pessoa: diz quantos aparelhos dela estão registrados e quantos receberam. */
+  async function test(memberId) {
+    return deliver(await rowsFor([memberId]), {
+      title: 'GAVYO Tarefas', body: 'Aviso de teste: se você está lendo isto, os avisos chegam neste aparelho.', url: '/?chat=1', tag: 'teste'
+    }, 'teste');
   }
 
   /** Chat global: todos menos quem escreveu. */
   async function teamMessage(message) {
     const members = await store.members();
     return sendTo(members.filter((member) => member.id !== message.author.id).map((member) => member.id), {
-      title: `${message.author.name} no chat da equipe`, body: message.text.slice(0, 180), url: '/?chat=1', tag: 'chat-equipe'
-    });
+      title: `${message.author.name} no chat da equipe`, body: (message.text || (message.images?.length ? '📷 Imagem' : 'Nova mensagem')).slice(0, 180),
+      url: '/?chat=1', tag: 'chat-equipe'
+    }, 'chat');
   }
 
   /** Conversa do cartão: responsável, quem já conversou ali e quem foi citado pelo nome; nunca quem escreveu. */
@@ -85,8 +100,8 @@ export function createPush({ query, store, subject = process.env.PUBLIC_ORIGIN |
     return sendTo(to, {
       title: `${actor.name} · ${card.key || 'cartão'} ${card.title}`.slice(0, 120), body: comment.slice(0, 180),
       url: `/?card=${card.id}`, tag: `cartao-${card.id}`
-    });
+    }, 'cartão');
   }
 
-  return { keys, subscribe, unsubscribe, sendTo, teamMessage, cardComment };
+  return { keys, subscribe, unsubscribe, sendTo, test, teamMessage, cardComment };
 }

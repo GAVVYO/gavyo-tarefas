@@ -2017,6 +2017,11 @@ document.addEventListener('click', async (event) => {
       if (control.dataset.project) openProjectChat(control.dataset.project); else openFromNotice(card);
     } else if (action === 'close-notice') {
       dismissBubble(control.closest('.bubble'));
+    } else if (action === 'push-test') {
+      const result = await request('/push/test', 'POST', {});
+      message(!result.devices ? 'Nenhum aparelho seu está registrado. Toque em "Tentar de novo" ou recarregue a página.'
+        : result.sent ? `Aviso enviado para ${result.sent} aparelho(s). Se não aparecer em alguns segundos, as notificações do navegador estão bloqueadas no sistema.`
+        : `O envio falhou (${result.failures.join(', ')}).`);
     } else if (action === 'notify-ask') {
       await Notification.requestPermission();
       const pushed = await syncPush().catch(() => false);
@@ -2353,12 +2358,29 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /* ---------- Avisos fora do site (Web Push) ---------- */
 let pushStarted = false;
+/** Como está o registro deste aparelho: '' (não tentou), 'ok' ou a mensagem do erro. */
+let pushState = '';
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const keyBytes = (base64) => Uint8Array.from(atob((base64 + '='.repeat((4 - base64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0));
 
 /** Liga o aparelho aos avisos da pessoa logada. Sem permissão, não faz nada (o botão do perfil pede). */
 async function syncPush() {
   if (!pushSupported() || Notification.permission !== 'granted') return false;
+  try {
+    await registerPush();
+    pushState = 'ok';
+    return true;
+  } catch (error) {
+    pushState = error.message || String(error);
+    console.error('Avisos: não foi possível registrar este aparelho.', error);
+    throw error;
+  } finally {
+    const slot = root.querySelector('.notify-pref');
+    if (slot) slot.innerHTML = notifyPrefButton();
+  }
+}
+
+async function registerPush() {
   const registration = await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
   let subscription = await registration.pushManager.getSubscription();
@@ -2390,7 +2412,14 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
 
 function notifyPrefButton() {
   if (!('Notification' in window)) return '<p class="notify-note">Este navegador não mostra avisos fora da aba.</p>';
-  if (Notification.permission === 'granted') return `<p class="notify-note is-on">${icon('bell-ring')}${pushSupported() ? 'Avisos ligados, mesmo com o site fechado' : 'Avisos fora da aba ligados'}</p>`;
+  if (Notification.permission === 'granted') {
+    if (!pushSupported()) return `<p class="notify-note is-on">${icon('bell-ring')}Avisos fora da aba ligados</p>`;
+    if (pushState && pushState !== 'ok') {
+      return `<p class="notify-note">Os avisos não ligaram neste navegador: ${escape(pushState)}</p>${button('Tentar de novo', 'notify-ask', 'refresh-cw', 'ghost notify-ask')}`;
+    }
+    return `<p class="notify-note is-on">${icon('bell-ring')}${pushState === 'ok' ? 'Avisos ligados neste aparelho, mesmo com o site fechado' : 'Ligando os avisos…'}</p>
+      ${pushState === 'ok' ? button('Mandar um aviso de teste', 'push-test', 'send', 'ghost notify-ask') : ''}`;
+  }
   if (Notification.permission === 'denied') return '<p class="notify-note">Avisos bloqueados no navegador. Libere nas configurações do site.</p>';
   return button(pushSupported() ? 'Receber avisos mesmo com o site fechado' : 'Avisar quando eu estiver em outra aba', 'notify-ask', 'bell', 'ghost notify-ask');
 }
