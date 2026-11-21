@@ -1678,7 +1678,7 @@ document.addEventListener('focusout', async (event) => {
   if (field === 'pr' && value && !/^https?:\/\/\S+$/i.test(value)) return message('O link do PR precisa começar com http:// ou https://.');
   try {
     await saveStep(box.dataset.card, box.dataset.step, { [field]: value }, field === 'pr' ? 'Link do PR salvo.' : 'Detalhes salvos.', 'PATCH', { [field]: shown });
-    if (box.isConnected) box.defaultValue = box.value;
+    if (box.isConnected) box.defaultValue = value;
   } catch (error) { message(error.message); }
 });
 document.addEventListener('keydown', async (event) => {
