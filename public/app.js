@@ -204,9 +204,9 @@ async function refresh({ shell = false } = {}) {
 }
 
 function projectHeading() {
-  return view === 'board' && board.projects.length > 1
+  return (view === 'board' || view === 'context') && board.projects.length > 1
     ? `<label class="title-picker"><select id="project" aria-label="Projeto">${projectOptions(projectId)}</select>${icon('chevron-down')}</label>`
-    : escape({ board: board.projects[0]?.name || 'Quadro', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
+    : escape({ board: board.projects[0]?.name || 'Quadro', context: board.projects[0]?.name || 'Contexto', mine: 'Minhas tarefas', archive: 'Arquivo' }[view]);
 }
 
 function updateProjectHeading() {
@@ -234,6 +234,7 @@ function renderShell() {
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
       ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
+      ${button('Contexto', 'context', 'book-open', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
     </nav>
   </header>
   <section class="heading">
@@ -242,7 +243,7 @@ function renderShell() {
     </div>
     <div id="mural-slot" class="mural-slot"></div>
   </section>
-  <div class="filters">
+  <div class="filters" ${view === 'context' ? 'hidden' : ''}>
     ${view !== 'archive' ? button('Bloqueados', 'filter', 'circle-alert', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
@@ -274,6 +275,7 @@ function navigate(nextView) {
   if (view === nextView) return;
   const previous = root.querySelector('.nav-pill')?.getBoundingClientRect();
   view = nextView;
+  contextEditing = false;
   search = '';
   blockedOnly = false;
   renderShell();
@@ -344,7 +346,8 @@ function agentBrief(card) {
     card.description ? `\nO que precisa ser feito:\n${card.description}` : '',
     card.checklist.length ? `\nPassos:\n${card.checklist.map((item) => `- [${item.done ? 'x' : ' '}] ${item.title}`).join('\n')}` : '',
     card.attachments?.length ? `\nO cartão tem ${card.attachments.length} print(s) no GAVYO Tarefas.` : '',
-    `\nBranch sugerida: ${branchName(card)}`,
+    `\nAntes de começar, leia o contexto do projeto: MCP gavyo-tarefas, ferramenta ver_contexto_projeto com projectId ${card.projectId}.`,
+    `Branch sugerida: ${branchName(card)}`,
     `Quando terminar, use o MCP gavyo-tarefas para comentar o que fez no cartão ${card.key || ''} e mover para a etapa certa.`
   ].filter(Boolean).join('\n');
 }
@@ -436,9 +439,109 @@ function muralTemplate(scoped) {
   </section>`;
 }
 
+/* ---------- Contexto do projeto ---------- */
+let contextEditing = false;
+const CONTEXT_PARTS = [
+  ['resumo', 'O que é', 'Em poucas linhas: o que o projeto faz e para quem.', 'compass'],
+  ['objetivo', 'No que estamos agora', 'A meta desta semana ou deste ciclo.', 'target'],
+  ['regras', 'Como trabalhamos', 'Regras para a equipe e para os assistentes: branch, PR, testes, tom de voz…', 'scroll-text'],
+  ['decisoes', 'Decisões tomadas', 'O que já foi decidido e por quê, para ninguém refazer a discussão.', 'milestone']
+];
+
+function contextBlock(text) {
+  return text.trim().split(/\n{2,}/).map((part) => `<p>${linkify(part)}</p>`).join('');
+}
+
+async function renderContext(content) {
+  const id = projectId;
+  if (!id) { content.innerHTML = '<p class="empty">Crie um projeto para escrever o contexto.</p>'; return; }
+  if (!content.querySelector('.ctx')) content.innerHTML = '<div class="ctx ctx-loading" aria-busy="true"></div>';
+  const ctx = await request(`/projects/${id}/context`).catch((error) => { message(error.message); return null; });
+  if (!ctx || view !== 'context' || id !== projectId || contextEditing) return;
+  const who = ctx.updated && memberNamed(ctx.updated.actor);
+  const instruction = `Antes de começar qualquer tarefa do projeto ${board.projects.find((item) => item.id === id)?.name}, use o MCP gavyo-tarefas: chame ver_contexto_projeto com projectId ${id} e siga as regras de lá.`;
+  content.innerHTML = `<div class="ctx" data-project="${id}">
+    <div class="ctx-bar">
+      <p class="ctx-updated">${ctx.updated ? `${face(who, 'card-face')}<span><b>${escape(ctx.updated.actor)}</b> mexeu ${when(ctx.updated.at)}${AGENTS.includes(ctx.updated.source) ? ` pelo ${ctx.updated.source}` : ''}</span>` : '<span>Ninguém escreveu o contexto ainda.</span>'}</p>
+      ${button('Editar contexto', 'context-edit', 'pencil', 'primary')}
+    </div>
+    <div class="ctx-grid">
+      <div class="ctx-main">
+        ${CONTEXT_PARTS.map(([key, title, hint, glyph], index) => `<section class="ctx-card" data-part="${key}">
+          <h2><span class="ctx-icon">${icon(glyph)}</span>${title}</h2>
+          ${ctx[key]?.trim() ? `<div class="ctx-text">${contextBlock(ctx[key])}</div>`
+            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="${key}">${icon('plus')}${hint}</button>`}
+        </section>`).join('')}
+      </div>
+      <aside class="ctx-side">
+        <section class="ctx-card ctx-agents">
+          <h2><span class="ctx-icon">${icon('bot')}</span>Para os assistentes</h2>
+          <p>O Claude e o Codex leem esta página pelo MCP antes de começar. Cole isto no começo da conversa:</p>
+          <pre class="ctx-code">${escape(instruction)}</pre>
+          ${button('Copiar instrução', 'copy-text', 'copy', 'ghost', `data-text="${escape(instruction)}" data-done="Instrução copiada."`)}
+        </section>
+        <section class="ctx-card">
+          <h2><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</h2>
+          ${ctx.stack?.trim() ? `<div class="ctx-text">${contextBlock(ctx.stack)}</div>` : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="stack">${icon('plus')}Linguagens, serviços, repositórios e onde está publicado.</button>`}
+        </section>
+        <section class="ctx-card">
+          <h2><span class="ctx-icon">${icon('link')}</span>Links</h2>
+          ${ctx.links?.length ? `<ul class="ctx-links">${ctx.links.map((link) => `<li><a href="${escape(link.url)}" target="_blank" rel="noopener noreferrer">
+            <span>${escape(link.title)}</span><small>${escape(link.url.replace(/^https?:\/\//, ''))}</small>${icon('external-link')}</a></li>`).join('')}</ul>`
+            : `<button type="button" class="ctx-empty" data-action="context-edit" data-focus="links">${icon('plus')}Site, repositório, design, painel…</button>`}
+        </section>
+        <section class="ctx-card ctx-team">
+          <h2><span class="ctx-icon">${icon('users')}</span>Equipe</h2>
+          <ul>${board.members.map((member) => `<li>${face(member, 'card-face')}<span>${escape(member.name)}</span></li>`).join('')}</ul>
+        </section>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function editContext(focusKey) {
+  const content = document.querySelector('#content');
+  const id = projectId;
+  const ctx = await request(`/projects/${id}/context`);
+  contextEditing = true;
+  const linkRow = (link = { title: '', url: '' }) => `<div class="ctx-link-row">
+    <input name="link-title" placeholder="Nome (ex.: Repositório)" value="${escape(link.title)}" maxlength="120" aria-label="Nome do link">
+    <input name="link-url" placeholder="https://…" value="${escape(link.url)}" maxlength="500" inputmode="url" aria-label="Endereço do link">
+    ${iconButton('Tirar link', 'context-link-remove', 'x')}</div>`;
+  content.innerHTML = `<form class="ctx ctx-editing" data-form="context" data-project="${id}">
+    <div class="ctx-bar">
+      <p class="ctx-updated"><span>Editando o contexto. Separe ideias com uma linha em branco.</span></p>
+      <span class="ctx-actions">${button('Cancelar', 'context-cancel', '', 'ghost')}<button class="btn primary">${icon('check')}Salvar contexto</button></span>
+    </div>
+    <div class="ctx-grid">
+      <div class="ctx-main">
+        ${CONTEXT_PARTS.map(([key, title, hint, glyph]) => `<label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon(glyph)}</span>${title}</span>
+          <textarea name="${key}" maxlength="12000" placeholder="${escape(hint)}">${escape(ctx[key] || '')}</textarea></label>`).join('')}
+      </div>
+      <aside class="ctx-side">
+        <label class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('layers')}</span>Stack e repositórios</span>
+          <textarea name="stack" maxlength="12000" placeholder="Linguagens, serviços, repositórios e onde está publicado.">${escape(ctx.stack || '')}</textarea></label>
+        <section class="ctx-card ctx-field"><span class="ctx-label"><span class="ctx-icon">${icon('link')}</span>Links</span>
+          <div class="ctx-links-edit">${(ctx.links?.length ? ctx.links : [undefined]).map(linkRow).join('')}</div>
+          ${button('Mais um link', 'context-link-add', 'plus', 'ghost')}
+        </section>
+      </aside>
+    </div>
+    <div class="error" role="alert"></div>
+  </form>`;
+  content.querySelector('.ctx-links-edit').dataset.template = linkRow();
+  (content.querySelector(`[name="${focusKey}"]`) || (focusKey === 'links' && content.querySelector('[name=link-title]')) || content.querySelector('textarea'))?.focus();
+}
+
 function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
+  if (view === 'context') {
+    document.querySelector('#mural-slot').innerHTML = '';
+    document.querySelector('#scope-summary').textContent = 'O que a equipe e os assistentes precisam saber antes de começar.';
+    if (!contextEditing) void renderContext(content);
+    return;
+  }
   const needle = search.trim().toLocaleLowerCase('pt-BR');
   const scoped = (view === 'archive' ? board.archive : board.cards).filter((card) =>
     (view !== 'board' || card.projectId === projectId) &&
@@ -1038,7 +1141,7 @@ document.addEventListener('click', async (event) => {
       root.querySelector(`.figure[data-person="${next || control.dataset.person}"]`)?.focus({ preventScroll: true });
     } else if (action === 'profile') {
       root.querySelector('.profile-handle')?.click();
-    } else if (['board', 'mine', 'archive'].includes(action)) {
+    } else if (['board', 'mine', 'archive', 'context'].includes(action)) {
       navigate(action);
     } else if (action === 'filter') {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
@@ -1092,6 +1195,17 @@ document.addEventListener('click', async (event) => {
       const text = action === 'copy-brief' ? agentBrief(cardById(card)) : control.dataset.text;
       await navigator.clipboard.writeText(text).catch(() => { throw new Error('Não deu para copiar. Tente de novo.'); });
       message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
+    } else if (action === 'context-edit') {
+      await editContext(control.dataset.focus);
+    } else if (action === 'context-cancel') {
+      contextEditing = false;
+      renderContents();
+    } else if (action === 'context-link-add') {
+      const list = root.querySelector('.ctx-links-edit');
+      list.insertAdjacentHTML('beforeend', list.dataset.template);
+      list.lastElementChild.querySelector('input').focus();
+    } else if (action === 'context-link-remove') {
+      control.closest('.ctx-link-row').remove();
     } else if (action === 'set-bg') {
       board.preferences = await request('/preferences', 'PUT', { background: control.dataset.bg });
       applyBackground(board.preferences);
@@ -1205,6 +1319,16 @@ document.addEventListener('submit', async (event) => {
         dialog.querySelector('.inspector-edit')?.focus({ preventScroll: true });
       }
       message(kind === 'comment' ? 'Comentário registrado.' : 'Cartão atualizado.');
+    } else if (kind === 'context') {
+      const links = [...form.querySelectorAll('.ctx-link-row')].map((row) => ({
+        title: row.querySelector('[name=link-title]').value.trim(), url: row.querySelector('[name=link-url]').value.trim()
+      })).filter((link) => link.title || link.url).map((link) => ({ ...link, title: link.title || link.url }));
+      const body = { links };
+      for (const key of ['resumo', 'objetivo', 'regras', 'decisoes', 'stack']) body[key] = form.elements[key].value;
+      await request(`/projects/${form.dataset.project}/context`, 'PUT', body);
+      contextEditing = false;
+      renderContents();
+      message('Contexto salvo. Os assistentes já leem a versão nova.');
     } else if (kind === 'token') {
       const { token } = await request('/tokens', 'POST', data);
       showToken(token, data.source);
@@ -1244,7 +1368,7 @@ document.addEventListener('input', (event) => {
   if (event.target.id === 'search') { search = event.target.value; renderContents(); }
 });
 document.addEventListener('change', (event) => {
-  if (event.target.id === 'project') { projectId = event.target.value; renderContents(); }
+  if (event.target.id === 'project') { projectId = event.target.value; contextEditing = false; renderContents(); }
 });
 document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !dialog.open) {

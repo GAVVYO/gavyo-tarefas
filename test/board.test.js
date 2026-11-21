@@ -62,13 +62,23 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 5);
+  assert.equal((await client.listTools()).tools.length, 7);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
     assert.ok(!result.isError, JSON.stringify(result));
     return JSON.parse(result.content[0].text);
   }
+
+  // Contexto do projeto: o assistente lê e escreve; a tela vê quem mexeu e por qual canal.
+  const context = await call('atualizar_contexto_projeto', { projectId: project.id, objetivo: 'Publicar o quadro' });
+  assert.equal(context.updated.source, 'Codex');
+  assert.equal((await call('ver_contexto_projeto', { projectId: project.id })).objetivo, 'Publicar o quadro');
+  const viaWeb = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { regras: 'Sempre abrir PR.' } });
+  assert.equal(viaWeb.status, 200);
+  assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
+  assert.equal(viaWeb.body.updated.source, 'Web');
+  assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {

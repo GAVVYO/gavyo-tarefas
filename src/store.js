@@ -295,5 +295,27 @@ export function createStore({ query }) {
     return { previous: current, saved: next };
   }
 
-  return { preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  /** Contexto do projeto: seções em texto e links; guarda quem mexeu por último e por qual canal. */
+  const CONTEXT_SECTIONS = ['resumo', 'objetivo', 'regras', 'stack', 'decisoes'];
+  const contextInput = z.object({
+    ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, z.string().max(12000).optional()])),
+    links: z.array(z.object({ title: z.string().trim().min(1).max(120), url: z.url().max(500).refine((value) => /^https?:\/\//i.test(value), 'Use um link http ou https.') })).max(30).optional()
+  });
+  async function projectContext(projectId) {
+    if (!(await project(projectId))) throw new AppError(404, 'Projeto não encontrado.');
+    const row = await first('SELECT data FROM project_context WHERE project_id = ?', [projectId]);
+    const empty = { ...Object.fromEntries(CONTEXT_SECTIONS.map((key) => [key, ''])), links: [], updated: null };
+    return { ...empty, ...(row ? JSON.parse(row.data) : {}) };
+  }
+  async function setProjectContext(projectId, input, actor) {
+    const current = await projectContext(projectId);
+    const patch = contextInput.parse(input);
+    const next = { ...current, ...patch, updated: event(actor, 'Editou o contexto') };
+    const data = JSON.stringify(next);
+    const saved = await query('UPDATE project_context SET data = ? WHERE project_id = ?', [data, projectId]);
+    if (!saved.affectedRows) await query('INSERT INTO project_context (project_id, data) VALUES (?, ?)', [projectId, data]);
+    return next;
+  }
+
+  return { projectContext, setProjectContext, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }

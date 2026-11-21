@@ -30,7 +30,9 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
     'cards (id VARCHAR(36) PRIMARY KEY, project_id VARCHAR(36) NOT NULL, version INTEGER NOT NULL, document MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))',
     'credentials (digest VARCHAR(64) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, source VARCHAR(20) NOT NULL, expires BIGINT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))',
     // Preferências de cada pessoa (fundo do quadro).
-    'preferences (member_id VARCHAR(36) PRIMARY KEY, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))'
+    'preferences (member_id VARCHAR(36) PRIMARY KEY, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))',
+    // Contexto de cada projeto: o que é, objetivo, regras, stack e links (as IAs leem pelo MCP).
+    'project_context (project_id VARCHAR(36) PRIMARY KEY, data MEDIUMTEXT NOT NULL, FOREIGN KEY (project_id) REFERENCES projects(id))'
   ];
   for (const definition of definitions) await query(`CREATE TABLE IF NOT EXISTS ${definition}`);
   return { query, close };

@@ -154,6 +154,10 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     res.set({ 'Content-Type': attachment.type, 'Cache-Control': 'private, max-age=31536000, immutable' }).send(bytes);
   });
 
+  app.get('/api/projects/:id/context', async (req, res) => res.json(await store.projectContext(z.uuid().parse(req.params.id))));
+  app.put('/api/projects/:id/context', async (req, res) =>
+    res.json(await store.setProjectContext(z.uuid().parse(req.params.id), req.body, req.actor)));
+
   app.put('/api/preferences', async (req, res) => {
     const input = z.object({ background: z.enum(['noite', 'couro', 'asfalto', 'entardecer', 'imagem']) }).parse(req.body);
     res.json((await store.setPreferences(req.actor.id, input)).saved);
