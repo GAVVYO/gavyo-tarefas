@@ -14,6 +14,9 @@ async function start() {
 
   const database = await openDatabase();
   const store = createStore(database);
+  // Os gastos do financeiro antigo passam a aparecer no Caixa da tela Empresa (cópia, sem apagar nada).
+  await store.migrateFinanceToCash().then((copied) => copied && console.log(`Caixa: ${copied} gasto(s) copiado(s) do financeiro.`))
+    .catch((error) => console.error('Caixa: migração do financeiro falhou:', error.message));
   if (production && process.env.ADMIN_NAME) await setupWorkspace(store, process.env, { onlyWhenEmpty: true });
   const push = createPush({ query: database.query, store });
   store.onEvent((event) => (event.type === 'team' ? push.teamMessage(event.message) : push.cardComment(event.card, event.comment, event.actor)));

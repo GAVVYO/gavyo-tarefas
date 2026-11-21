@@ -2,7 +2,7 @@ import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
 import { setupTeamChat } from './team-chat.js';
-import { setupProjectFinance } from './project-finance.js';
+import { setupCompany } from './company.js';
 
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
@@ -310,8 +310,10 @@ function updateProjectHeading() {
   if (restorePickerFocus) root.querySelector('#project')?.focus({ preventScroll: true });
 }
 
+let companyStarted = false;
 function renderShell() {
   teamChat.setUser(board.user);
+  if (!companyStarted) { companyStarted = true; void company.start(); }
   if (!pushStarted) {
     pushStarted = true;
     void syncPush().catch(() => {});
@@ -332,18 +334,19 @@ function renderShell() {
     <nav class="workspace-nav" aria-label="Área de trabalho" data-view="${view}">
       <span class="nav-pill" aria-hidden="true"></span>
       ${button('Quadro', 'board', 'columns-3', 'nav-btn', view === 'board' ? 'aria-current="page"' : '')}
-      ${button('Minhas tarefas', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
+      ${button('<span class="nav-long">Minhas tarefas</span><span class="nav-short">Minhas</span>', 'mine', 'list-checks', 'nav-btn', view === 'mine' ? 'aria-current="page"' : '')}
       ${button('Arquivo', 'archive', 'archive', 'nav-btn', view === 'archive' ? 'aria-current="page"' : '')}
       ${button('<span class="nav-long">Central de projetos</span><span class="nav-short">Projetos</span>', 'context', 'folder-kanban', 'nav-btn', view === 'context' ? 'aria-current="page"' : '')}
+      ${button('Empresa', 'company', 'building-2', 'nav-btn', view === 'company' ? 'aria-current="page"' : '')}
     </nav>
   </header>
-  <section class="heading" ${view === 'context' ? 'hidden' : ''}>
+  <section class="heading" ${view === 'context' || view === 'company' ? 'hidden' : ''}>
     <div><h1>${projectHeading()}</h1>
       <p id="scope-summary" class="muted"></p>
     </div>
     <div id="mural-slot" class="mural-slot"></div>
   </section>
-  <div class="filters" ${view === 'context' ? 'hidden' : ''}>
+  <div class="filters" ${view === 'context' || view === 'company' ? 'hidden' : ''}>
     ${view !== 'archive' ? button('Travados', 'filter', 'octagon-pause', '', `aria-pressed="${blockedOnly}"`) : ''}
     ${iconButton('Atualizar quadro', 'refresh', 'refresh-cw')}
     ${button('Novo cartão', 'new', 'plus', 'primary', board.projects.length ? '' : 'disabled')}
@@ -569,7 +572,8 @@ let hubCite = null;
 let hubPicking = false;
 let hubTimer = 0;
 let hubPainted = '';
-const HUB_SECTORS = [['atividade', 'Atividade', 'git-commit-horizontal'], ['contexto', 'Contexto', 'book-open'], ['financeiro', 'Financeiro', 'wallet']];
+const HUB_SECTORS = [['atividade', 'Atividade', 'git-commit-horizontal'], ['contexto', 'Contexto', 'book-open']];
+// O dinheiro da empresa agora fica no Caixa da tela Empresa (os gastos antigos foram copiados para lá).
 
 /** Quem mexeu, por qual canal, quando e qual versão leu. */
 function signature(by, compact = false) {
@@ -589,7 +593,7 @@ function nextStep(id) {
 
 function hostOf(url) { return url.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 
-const projectFinance = setupProjectFinance({ request, escape, openDialog, dialog, icon, message, onExpired: endBoardSession });
+const company = setupCompany({ request, escape, face, icon, message, onExpired: endBoardSession, getBoard: () => board });
 
 /* ---------- Central de projetos ---------- */
 function renderHub(content) {
@@ -622,7 +626,6 @@ function renderHub(content) {
   panel.setAttribute('aria-labelledby', `hub-tab-${hubSector}`);
   if (hubSector !== 'atividade') clearTimeout(hubTimer);
   if (hubSector === 'contexto') { if (!contextEditing) void renderContext(panel); return; }
-  if (hubSector === 'financeiro') { projectFinance.render(panel, id, board); return; }
   if (!panel.querySelector('.hub-activity')) {
     panel.innerHTML = `<div class="hub-activity">
       <section class="hub-tree" aria-labelledby="hub-tree-title">
@@ -985,6 +988,12 @@ let lastMural = {};
 function renderContents() {
   const content = document.querySelector('#content');
   if (!content) return;
+  if (view !== 'company') company.stop();
+  if (view === 'company') {
+    document.querySelector('#mural-slot').innerHTML = '';
+    if (!content.querySelector('.company')) void company.render(content);
+    return;
+  }
   if (view === 'context') {
     document.querySelector('#mural-slot').innerHTML = '';
     if (!contextEditing || !content.querySelector('.hub')) renderHub(content);
@@ -1930,7 +1939,7 @@ document.addEventListener('click', async (event) => {
       root.querySelector(`.figure[data-person="${next || control.dataset.person}"]`)?.focus({ preventScroll: true });
     } else if (action === 'profile') {
       root.querySelector('.profile-handle')?.click();
-    } else if (['board', 'mine', 'archive', 'context'].includes(action)) {
+    } else if (['board', 'mine', 'archive', 'context', 'company'].includes(action)) {
       navigate(action);
     } else if (action === 'filter') {
       blockedOnly = !blockedOnly; control.setAttribute('aria-pressed', blockedOnly); renderContents();
@@ -2520,6 +2529,8 @@ let nextActivityRender = 0;
 
 function stopBoardSync() {
   teamChat.setUser(null);
+  companyStarted = false;
+  company.signOut();
   pushStarted = false;
   clearTimeout(autoTimer);
   clearTimeout(presenceTimer);

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'no
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { createFinance } from './finance.js';
+import { createCompany } from './company.js';
 
 // Mensagens de validação em português (também chegam às IAs pelo MCP).
 z.config(z.locales.pt());
@@ -722,5 +723,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { reactTeamMessage, teamReactionRevision, teamReactions, saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), onEvent, subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { reactTeamMessage, teamReactionRevision, teamReactions, saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), ...createCompany({ query, members, AppError }), onEvent, subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }

@@ -312,7 +312,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
    */
   app.post('/api/presence', async (req, res) => {
     const { view, cardId, away } = z.object({
-      view: z.enum(['board', 'mine', 'archive', 'context']).optional(),
+      view: z.enum(['board', 'mine', 'archive', 'context', 'company']).optional(),
       cardId: z.uuid().nullable().optional(), away: z.boolean().optional()
     }).parse(req.body);
     const now = Date.now();
@@ -321,6 +321,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     res.json([...presence].map(([id, item]) => ({ id, ...item })));
   });
 
+  // Tela Empresa: /api/company/note | event | cash
+  app.get('/api/company/:kind', async (req, res) => res.json(await store.companyItems(req.params.kind)));
+  app.post('/api/company/:kind', async (req, res) => res.status(201).json(await store.addCompanyItem(req.params.kind, req.body, req.actor)));
+  app.patch('/api/company/:kind/:id', async (req, res) => res.json(await store.updateCompanyItem(req.params.kind, req.params.id, req.body, req.actor)));
+  app.delete('/api/company/:kind/:id', async (req, res) => { await store.removeCompanyItem(req.params.kind, req.params.id); res.json({ ok: true }); });
   app.get('/api/projects/:id/finance', async (req, res) =>
     res.json(await store.projectFinance(z.uuid().parse(req.params.id))));
   app.post('/api/projects/:id/finance/categories', async (req, res) =>
