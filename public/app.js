@@ -927,18 +927,45 @@ function showToken(token, source) {
   </div>`);
 }
 
+/**
+ * Deslize: guarda onde cada cartão estava, redesenha e faz os outros escorregarem
+ * para o lugar novo (em vez de pular). Os contadores das colunas que mudaram pulsam.
+ */
+function slideCards(change, skip) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const before = new Map([...root.querySelectorAll('.card[data-id]')].map((el) => [el.dataset.id, el.getBoundingClientRect()]));
+  const counts = new Map([...root.querySelectorAll('.column')].map((el) => [el.dataset.status, el.querySelector('.count')?.textContent]));
+  change();
+  if (reduce) return;
+  for (const el of root.querySelectorAll('.card[data-id]')) {
+    const old = before.get(el.dataset.id);
+    if (!old || el.dataset.id === skip) continue;
+    const now = el.getBoundingClientRect();
+    const dx = old.left - now.left;
+    const dy = old.top - now.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+    el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 360, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+  for (const column of root.querySelectorAll('.column')) {
+    const count = column.querySelector('.count');
+    if (count && counts.get(column.dataset.status) !== count.textContent) {
+      count.animate([{ transform: 'scale(1.5)', color: 'var(--accent-hover)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.2,1.4,.4,1)' });
+    }
+  }
+}
+
 async function placeCard(id, status, dragSource) {
   const card = cardById(id);
   if (!card || status === card.status) return;
   await request(`/cards/${id}`, 'PATCH', { status, version: card.version });
   boardRevision++;
   const snapshot = await readBoard();
-  const paint = () => {
+  const paint = () => slideCards(() => {
     acceptBoard(snapshot);
     moved = dragSource ? '' : id;
     renderContents();
     moved = '';
-  };
+  }, id);
   const html = document.documentElement;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!dragSource && !reduce && document.startViewTransition && !html.hasAttribute('data-card-transition')) {
@@ -1396,7 +1423,10 @@ document.addEventListener('keydown', (event) => {
     menu.open = false; menu.querySelector('summary').focus();
   }
 });
+document.addEventListener('dragend', () => root.querySelectorAll('.card.lifted').forEach((el) => el.classList.remove('lifted')));
 document.addEventListener('dragstart', (event) => {
+  const lifted = event.target.closest?.('.card');
+  if (lifted) requestAnimationFrame(() => lifted.classList.add('lifted'));
   const card = event.target.closest('.card[draggable]');
   if (card && event.target === card) {
     dragged = card.dataset.id;
