@@ -43,6 +43,9 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
     'github_events (id VARCHAR(300) PRIMARY KEY, repo VARCHAR(200) NOT NULL, at BIGINT NOT NULL, data MEDIUMTEXT NOT NULL)'
   ];
   for (const definition of definitions) await query(`CREATE TABLE IF NOT EXISTS ${definition}`);
+  // Avisos fora do site: um registro por aparelho autorizado e as chaves de envio.
+  await query('CREATE TABLE IF NOT EXISTS push_subscriptions (id VARCHAR(64) PRIMARY KEY, member_id VARCHAR(36) NOT NULL, data TEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))');
+  await query('CREATE TABLE IF NOT EXISTS push_keys (id INTEGER PRIMARY KEY, public_key VARCHAR(200) NOT NULL, private_key VARCHAR(200) NOT NULL)');
   // Sequência do banco evita perder mensagens enviadas no mesmo milissegundo.
   await query(`CREATE TABLE IF NOT EXISTS team_messages (
     sequence ${url ? 'BIGINT PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},

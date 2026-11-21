@@ -344,5 +344,5 @@ export function setupTeamChat({ request, onExpired }) {
     if (!user) trigger.hidePopover?.();
     else placeTrigger();
   }
-  return { setUser, get isOpen() { return panel.open; } };
+  return { setUser, open, get isOpen() { return panel.open; } };
 }
