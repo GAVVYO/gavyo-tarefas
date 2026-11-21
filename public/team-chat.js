@@ -49,6 +49,12 @@ export function setupTeamChat({ request, onExpired }) {
   const feedback = find('.team-chat-feedback');
   const errorBox = find('.team-chat-error');
   let user = null, previousFocus, stream, session = 0, reading = null, sending = false;
+  let liveCursor = 0, unreadCount = 0;
+  const toast = document.createElement('button');
+  toast.type = 'button'; toast.className = 'btn team-chat-toast'; toast.hidden = true;
+  toast.setAttribute('popover', 'manual'); toast.setAttribute('aria-live', 'polite');
+  document.body.append(toast);
+  toast.addEventListener('click', open);
   let messages = [], hasOlder = false, retrySend = false, pendingMessage = null;
   let viewportCleanup;
   const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
@@ -59,6 +65,8 @@ export function setupTeamChat({ request, onExpired }) {
     const parent = [...document.querySelectorAll('dialog[open]')].filter(d => d !== panel && d.matches(':modal')).at(-1) || document.body;
     // Dentro do modal ativo para não ficar inerte; popover evita o recorte do diálogo.
     if (trigger.parentElement !== parent) parent.append(trigger);
+    if (toast.parentElement !== parent) parent.append(toast);
+    if (!toast.hidden && toast.showPopover && !toast.matches(':popover-open')) toast.showPopover();
     if (trigger.showPopover && !trigger.matches(':popover-open')) trigger.showPopover();
   }
   new MutationObserver(placeTrigger).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
@@ -120,13 +128,33 @@ export function setupTeamChat({ request, onExpired }) {
   }
 
   function connect() {
-    if (stream || !user || !panel.open) return;
+    if (stream || !user) return;
     const current = session;
-    const source = new EventSource(`/api/team/messages/stream?after=${lastSequence() ?? 0}`);
+    const source = new EventSource(`/api/team/messages/stream?after=${liveCursor}`);
     stream = source;
     source.addEventListener('messages', event => {
-      if (current !== session || stream !== source || !panel.open) return;
-      draw(JSON.parse(event.data));
+      if (current !== session || stream !== source) return;
+      const incoming = JSON.parse(event.data);
+      const fresh = incoming.filter(m => m.sequence > liveCursor);
+      for (const msg of fresh) {
+        liveCursor = Math.max(liveCursor, msg.sequence);
+        if (msg.author.id !== user.id && (!panel.open || document.hidden)) {
+          unreadCount++;
+          trigger.textContent = `Chat da equipe (${unreadCount})`;
+          trigger.setAttribute('aria-label', `Abrir chat da equipe: ${unreadCount} mensagens não lidas (Ctrl+Shift+Z)`);
+          if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              const notice = new Notification(`${msg.author.name} no chat da equipe`, { body: msg.text.slice(0,160), icon: '/aguia-dourada.svg', tag: 'gavyo-team-chat' });
+              notice.onclick = () => { window.focus(); open(); notice.close(); };
+            } catch { /* O contador permanece disponível se o navegador não aceitar o aviso. */ }
+          } else if (!document.hidden) {
+            toast.textContent = `${msg.author.name}: ${msg.text.slice(0,100)} — Abrir chat`;
+            toast.hidden = false;
+            if (!toast.matches(':popover-open')) toast.showPopover?.();
+          }
+        }
+      }
+      if (panel.open) draw(incoming);
       if (!retrySend) errorBox.hidden = true;
     });
     source.onopen = () => {
@@ -144,6 +172,14 @@ export function setupTeamChat({ request, onExpired }) {
       } catch { /* EventSource reconecta sozinho e retoma pelo Last-Event-ID. */ }
     };
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (panel.open && !document.hidden) {
+      unreadCount = 0; trigger.textContent = 'Chat da equipe';
+      trigger.setAttribute('aria-label', 'Abrir chat da equipe (Ctrl+Shift+Z)');
+      toast.hidePopover?.(); toast.hidden = true;
+    }
+  });
 
   function disconnect() {
     stream?.close();
@@ -177,7 +213,7 @@ export function setupTeamChat({ request, onExpired }) {
       if (reading === marker) reading = null;
       older.disabled = false;
       if (loaded && current === session && panel.open) {
-        if (more) void load(); else connect();
+        if (more) void load(); else { liveCursor = lastSequence() ?? liveCursor; connect(); }
       }
     }
   }
@@ -196,6 +232,10 @@ export function setupTeamChat({ request, onExpired }) {
   function open() {
     if (!user || panel.open) return;
     previousFocus = document.activeElement;
+    disconnect();
+    unreadCount = 0; trigger.textContent = 'Chat da equipe';
+    trigger.setAttribute('aria-label', 'Abrir chat da equipe (Ctrl+Shift+Z)');
+    toast.hidePopover?.(); toast.hidden = true;
     trigger.hidePopover?.();
     trigger.hidden = true;
     trigger.setAttribute('aria-expanded', 'true');
@@ -212,7 +252,6 @@ export function setupTeamChat({ request, onExpired }) {
   }
 
   panel.addEventListener('close', () => {
-    disconnect();
     viewportCleanup?.();
     trigger.hidden = !user;
     trigger.setAttribute('aria-expanded', 'false');
@@ -291,6 +330,16 @@ export function setupTeamChat({ request, onExpired }) {
     input.value = ''; input.disabled = false; send.disabled = false; send.textContent = 'Enviar mensagem';
     log.replaceChildren(); older.hidden = true; empty.hidden = false; empty.textContent = 'Carregando mensagens…';
     errorBox.hidden = true; retrySend = false; feedback.textContent = '';
+    liveCursor = 0; unreadCount = 0;
+    trigger.textContent = 'Chat da equipe';
+    toast.hidePopover?.(); toast.hidden = true;
+    if (user) {
+      const current = session;
+      void request('/team/messages?limit=1').then(page => {
+        if (current !== session) return;
+        liveCursor = page.nextAfter ?? 0; connect();
+      }).catch(error => { if (current === session) fail(error, false); });
+    }
     trigger.hidden = !user;
     if (!user) trigger.hidePopover?.();
     else placeTrigger();

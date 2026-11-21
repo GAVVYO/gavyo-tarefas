@@ -24,6 +24,7 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
         <h2 tabindex="-1">Financeiro</h2>
         <div class="fin-actions">
           <button class="btn fin-btn" type="button" data-fin="reload">${icon('refresh-cw')}Atualizar</button>
+          <button class="btn fin-btn" type="button" data-fin="category">Nova categoria</button>
           <button class="btn primary fin-btn" type="button" data-fin="new" disabled>${icon('plus')}Registrar gasto</button>
         </div>
       </header>
@@ -35,6 +36,7 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
     const body = frame.querySelector('.fin-body');
     const register = frame.querySelector('[data-fin=new]');
     let snapshot;
+    let selectedCategory;
     let pendingLoad;
     const name = (id) => escape(board.members.find((member) => member.id === id)?.name ?? 'Membro da equipe');
     const author = (entry) => `${escape(entry.actor)} · ${escape(entry.source)}<small><time datetime="${escape(entry.at)}">${timestamps.format(new Date(entry.at))}</time></small>`;
@@ -64,7 +66,13 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
           </div>
         </li>`;
       }).join('');
-      const expenseRows = expenses.map((entry) => `<tr role="row">
+      const categoryCards = [{ id: '', name: 'Sem categoria' }, ...(snapshot.categories || [])].map(category => {
+        const items = expenses.filter(e => (e.categoryId || '') === category.id);
+        const total = items.reduce((sum, e) => sum + e.amountCents, 0);
+        return `<button class="fin-category btn" type="button" data-fin="filter-category" data-id="${escape(category.id)}" aria-pressed="${selectedCategory === category.id}"><strong>${escape(category.name)}</strong><span>${money(total)}</span><small>${items.length} gasto(s)</small></button>`;
+      }).join('');
+      const shownExpenses = selectedCategory === undefined ? expenses : expenses.filter(e => (e.categoryId || '') === selectedCategory);
+      const expenseRows = shownExpenses.map((entry) => `<tr role="row">
         <td role="cell"><details>
           <summary>${escape(entry.description)}</summary>
           <ul class="fin-shares">${entry.shares.map((share) => `<li>${name(share.memberId)} · ${money(share.amountCents)}</li>`).join('')}</ul>
@@ -72,19 +80,22 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
         <td role="cell"><span class="fin-mobile-label" aria-hidden="true">Pago por</span>${name(entry.payerId)}</td>
         <td role="cell"><span class="fin-mobile-label" aria-hidden="true">Data</span>${day(entry.paidOn)}</td>
         <td role="cell" class="fin-amount"><span class="fin-mobile-label" aria-hidden="true">Valor</span>${money(entry.amountCents)}</td>
-        <td role="cell"><span class="fin-mobile-label" aria-hidden="true">Registro</span>${author(entry)}</td>
+        <td role="cell"><span class="fin-mobile-label" aria-hidden="true">Registro</span>${author(entry)}<button class="btn fin-btn" type="button" data-fin="delete" data-id="${entry.id}" aria-label="Excluir gasto ${escape(entry.description)}">Excluir</button></td>
       </tr>`).join('');
       const history = settlements.map((entry) => `<li class="fin-row">
         <span>${name(entry.fromId)} acertou <strong>${money(entry.amountCents)}</strong> com ${name(entry.toId)}</span>
         <span>${author(entry)}</span>
       </li>`).join('');
+      const removed = (snapshot.deletions || []).map(entry => `<li class="fin-row"><span>${escape(entry.description)} · ${money(entry.amountCents)}</span><span>${author(entry)}</span></li>`).join('');
       body.innerHTML =
+        section('categories', 'Categorias', `<div class="fin-category-grid">${categoryCards}</div><button type="button" class="btn fin-btn" data-fin="all-categories">Todos os gastos</button>`) +
         section('debts', 'Acertos pendentes', debts ? `<ul class="fin-list">${debts}</ul>` : noRows('Nenhum acerto pendente.')) +
         section('due', 'Próximos vencimentos', due ? `<ul class="fin-list">${due}</ul>` : noRows('Nenhum gasto recorrente.')) +
         section('expenses', 'Gastos registrados', expenseRows ? `<table class="fin-table" role="table" aria-labelledby="fin-expenses">
           <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Gasto</th><th scope="col" role="columnheader">Pago por</th>
           <th scope="col" role="columnheader">Data</th><th scope="col" role="columnheader" class="fin-amount">Valor</th><th scope="col" role="columnheader">Registro</th></tr></thead>
           <tbody role="rowgroup">${expenseRows}</tbody></table>` : noRows('Nenhum gasto registrado neste projeto.')) +
+        (removed ? section('deleted', 'Gastos excluídos', `<ul class="fin-list">${removed}</ul>`) : '') +
         (history ? section('settled', 'Acertos registrados', `<ul class="fin-list">${history}</ul>`) : '');
     }
 
@@ -138,7 +149,7 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
         feedback.textContent = '';
         try {
           await handler(new FormData(form));
-          message(form.dataset.finForm === 'settle' ? 'Acerto registrado.' : 'Gasto registrado.');
+          message(({ settle: 'Acerto registrado.', category: 'Categoria criada.', delete: 'Gasto excluído. Saldos atualizados.' })[form.dataset.finForm] || 'Gasto registrado.');
           if (form.isConnected && dialog.open) {
             focusAfterClose();
             dialog.close();
@@ -172,6 +183,7 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
       openDialog(renewal ? 'Registrar pagamento' : 'Registrar gasto', `<form class="fin-form">
         ${renewal ? `<p>Vencimento de <strong>${day(renewal.dueOn)}</strong></p>` : ''}
         <label class="field">O que foi pago<input name="description" required maxlength="300" value="${escape(previous?.description)}"></label>
+        <label class="field">Categoria<select name="categoryId"><option value="">Sem categoria</option>${(snapshot.categories || []).map(c => `<option value="${escape(c.id)}" ${(previous?.categoryId ?? selectedCategory) === c.id ? 'selected' : ''}>${escape(c.name)}</option>`).join('')}</select></label>
         <div class="fin-fields">
           <label class="field">Valor (R$)<input name="amount" inputmode="decimal" required maxlength="12" value="${amount}" placeholder="120,50"></label>
           <label class="field">Data do pagamento<input name="paidOn" type="date" required max="9998-12-31" value="${snapshot.today}"></label>
@@ -199,7 +211,7 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
         if (!participantIds.length) throw new Error('Selecione pelo menos uma pessoa para o rateio.');
         const input = {
           description: data.get('description'), amountCents: parseAmount(data.get('amount')), paidOn: data.get('paidOn'),
-          payerId: data.get('payerId'), participantIds, frequency: data.get('frequency') || 'none',
+          categoryId: data.get('categoryId') || null, payerId: data.get('payerId'), participantIds, frequency: data.get('frequency') || 'none',
           ...(renewal && { occurrence: { expenseId: renewal.id, dueOn: renewal.dueOn } })
         };
         const key = JSON.stringify(input);
@@ -226,6 +238,19 @@ export function setupProjectFinance({ request, escape, openDialog, dialog, icon,
     frame.addEventListener('click', ({ target }) => {
       const control = target.closest('[data-fin]');
       if (!control) return;
+      if (control.dataset.fin === 'filter-category' && snapshot) { selectedCategory = control.dataset.id; paint(); }
+      if (control.dataset.fin === 'all-categories' && snapshot) { selectedCategory = undefined; paint(); }
+      if (control.dataset.fin === 'category' && snapshot) {
+        openDialog('Nova categoria', `<form class="fin-form" data-fin-form="category"><label class="field">Nome da categoria<input name="name" required maxlength="60" placeholder="IA, Hospedagem…"></label><p class="error" role="alert"></p><button class="btn primary" type="submit">Criar categoria</button></form>`, '[name=name]');
+        submitForm(dialog.querySelector('.fin-form'), data => request(financePath(projectId) + '/categories', 'POST', { name: data.get('name') }));
+      }
+      if (control.dataset.fin === 'delete' && snapshot) {
+        const entry = snapshot.expenses.find(e => e.id === control.dataset.id);
+        if (!entry) return;
+        const version = snapshot.version;
+        openDialog('Excluir gasto', `<form class="fin-form" data-fin-form="delete"><p>Excluir <strong>${escape(entry.description)}</strong> de ${money(entry.amountCents)}?</p><p>Os saldos serão recalculados. Se houver renovações vinculadas a este gasto, elas também sairão dos totais. Acertos já registrados continuam no histórico e podem gerar um saldo de devolução. A exclusão ficará registrada com seu nome.</p><p class="error" role="alert"></p><button class="btn" type="button" data-action="close">Cancelar</button><button class="btn primary" type="submit">Excluir gasto</button></form>`, '[data-action=close]');
+        submitForm(dialog.querySelector('.fin-form'), () => request(financePath(projectId) + '/expenses/' + entry.id, 'DELETE', { version }));
+      }
       if (control.dataset.fin === 'reload') void load();
       if (control.dataset.fin === 'new' && snapshot) expenseDialog();
       if (control.dataset.fin === 'settle' && snapshot) settlementDialog(Number(control.dataset.index));

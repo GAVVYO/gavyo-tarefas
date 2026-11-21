@@ -289,6 +289,10 @@ export function createApp(store, { production = false, origin = '', uploads = pr
 
   app.get('/api/projects/:id/finance', async (req, res) =>
     res.json(await store.projectFinance(z.uuid().parse(req.params.id))));
+  app.post('/api/projects/:id/finance/categories', async (req, res) =>
+    res.status(201).json(await store.addFinanceCategory(z.uuid().parse(req.params.id), req.body, req.actor)));
+  app.delete('/api/projects/:id/finance/expenses/:expense', async (req, res) =>
+    res.json(await store.deleteExpense(z.uuid().parse(req.params.id), z.uuid().parse(req.params.expense), req.body, req.actor)));
   app.post('/api/projects/:id/finance/expenses', async (req, res) =>
     res.status(201).json(await store.addExpense(z.uuid().parse(req.params.id), req.body, req.actor)));
   app.post('/api/projects/:id/finance/settlements', async (req, res) =>

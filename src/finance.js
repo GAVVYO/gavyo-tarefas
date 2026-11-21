@@ -11,6 +11,7 @@ export const expenseInput = z.object({
   participantIds: z.array(z.uuid()).min(1).max(250),
   frequency: z.enum(['none', 'monthly', 'yearly']).default('none'),
   occurrence: z.object({ expenseId: z.uuid(), dueOn: z.iso.date() }).optional(),
+  categoryId: z.uuid().nullable().optional(),
   operationId: z.uuid().optional()
 }).strict();
 const settlementInput = z.object({
@@ -48,7 +49,7 @@ function calculateBalances(entries) {
   }
   for (const entry of entries) {
     if (entry.kind === 'settlement') add(entry.fromId, entry.toId, -entry.amountCents);
-    else for (const share of entry.shares) add(share.memberId, entry.payerId, share.amountCents);
+    else if (entry.kind === 'expense') for (const share of entry.shares) add(share.memberId, entry.payerId, share.amountCents);
   }
   return [...pairs.entries()].sort(([a], [b]) => a.localeCompare(b)).flatMap(([key, amount]) => {
     if (amount === 0n) return [];
@@ -61,13 +62,16 @@ function nextRenewals(entries, today) {
   const paid = new Map();
   for (const entry of entries) {
     if (entry.kind === 'expense' && entry.occurrence) {
-      const id = entry.occurrence.expenseId;
-      paid.set(id, (paid.get(id) || 0) + 1);
+      const { expenseId, dueOn } = entry.occurrence;
+      if (!paid.has(expenseId)) paid.set(expenseId, new Set());
+      paid.get(expenseId).add(dueOn);
     }
   }
   return entries.flatMap((entry) => {
     if (entry.kind !== 'expense' || entry.frequency === 'none') return [];
-    const dueOn = nextDue(entry.paidOn, entry.frequency, (paid.get(entry.id) || 0) + 1);
+    let occurrence = 1;
+    let dueOn = nextDue(entry.paidOn, entry.frequency, occurrence);
+    while (dueOn && paid.get(entry.id)?.has(dueOn)) dueOn = nextDue(entry.paidOn, entry.frequency, ++occurrence);
     if (!dueOn) return [];
     const days = (Date.parse(dueOn) - Date.parse(today)) / dayMs;
     return [{ id: entry.id, dueOn, days, notice: days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'later' }];
@@ -93,12 +97,45 @@ export function createFinance({ query, project, members, event, AppError }) {
     }
   }
 
+  function active(entries) {
+    const removed = new Set(entries.filter(e => e.kind === 'expense_deleted').map(e => e.expenseId));
+    return entries.filter(e => !removed.has(e.id) && !removed.has(e.occurrence?.expenseId));
+  }
+
+  async function addFinanceCategory(projectId, input, actor) {
+    const { name } = z.object({ name: z.string().trim().min(1).max(60) }).strict().parse(input);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { version, entries } = await read(projectId);
+      const previous = entries.find(e => e.kind === 'category' && e.name.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'));
+      if (previous) return previous;
+      const entry = { id: randomUUID(), kind: 'category', name, ...event(actor, 'Criou categoria') };
+      if (await append(projectId, version, entry)) return entry;
+    }
+    throw new AppError(409, 'O financeiro mudou. Tente novamente.');
+  }
+
+  async function deleteExpense(projectId, expenseId, input, actor) {
+    const { version } = z.object({ version: z.number().int().nonnegative() }).strict().parse(input);
+    const current = await read(projectId);
+    const expense = current.entries.find(e => e.id === expenseId && e.kind === 'expense');
+    if (!expense) throw new AppError(404, 'Gasto não encontrado.');
+    const previous = current.entries.find(e => e.kind === 'expense_deleted' && e.expenseId === expenseId);
+    if (previous) return previous;
+    if (current.version !== version) throw new AppError(409, 'O financeiro mudou. Atualize antes de excluir.');
+    const entry = { id: randomUUID(), kind: 'expense_deleted', expenseId, description: expense.description,
+      amountCents: expense.amountCents, ...event(actor, 'Excluiu gasto') };
+    if (!await append(projectId, version, entry)) throw new AppError(409, 'O financeiro mudou. Atualize antes de excluir.');
+    return entry;
+  }
+
   async function projectFinance(projectId) {
-    const { version, entries } = await read(projectId);
+    const { version, entries: history } = await read(projectId);
+    const entries = active(history);
     const today = todayInFortaleza.format(new Date());
     const expenses = entries.filter((entry) => entry.kind === 'expense').sort((a, b) => b.paidOn.localeCompare(a.paidOn) || b.at.localeCompare(a.at));
     return {
-      projectId, version, today, expenses, balances: calculateBalances(entries),
+      projectId, version, today, expenses, categories: entries.filter(e => e.kind === 'category'),
+      deletions: history.filter(e => e.kind === 'expense_deleted').reverse(), balances: calculateBalances(entries),
       settlements: entries.filter((entry) => entry.kind === 'settlement').reverse(),
       renewals: nextRenewals(entries, today)
     };
@@ -121,6 +158,7 @@ export function createFinance({ query, project, members, event, AppError }) {
       actorId: actor.id, ...event(actor, 'Registrou gasto') };
     for (let attempt = 0; attempt < 5; attempt++) {
       const { version, entries } = await read(projectId);
+      if (fields.categoryId && !entries.some(e => e.kind === 'category' && e.id === fields.categoryId)) throw new AppError(400, 'Categoria não encontrada neste projeto.');
       const previous = entries.find((entry) => entry.id === expense.id);
       if (previous) {
         const sameFields = Object.keys(fields).every((key) => JSON.stringify(previous[key]) === JSON.stringify(expense[key]));
@@ -130,7 +168,7 @@ export function createFinance({ query, project, members, event, AppError }) {
       }
       if (fields.occurrence) {
         const { expenseId, dueOn } = fields.occurrence;
-        const next = nextRenewals(entries, todayInFortaleza.format(new Date())).find(({ id }) => id === expenseId);
+        const next = nextRenewals(active(entries), todayInFortaleza.format(new Date())).find(({ id }) => id === expenseId);
         if (next?.dueOn !== dueOn) throw new AppError(409, 'O vencimento mudou. Confira o próximo pagamento na aba Financeiro.');
       }
       if (await append(projectId, version, expense)) return expense;
@@ -141,7 +179,7 @@ export function createFinance({ query, project, members, event, AppError }) {
   async function settleFinance(projectId, input, actor) {
     const { version, fromId, toId, amountCents } = settlementInput.parse(input);
     const current = await read(projectId);
-    const balance = calculateBalances(current.entries).find((entry) => entry.fromId === fromId && entry.toId === toId);
+    const balance = calculateBalances(active(current.entries)).find((entry) => entry.fromId === fromId && entry.toId === toId);
     const changed = () => new AppError(409, 'O saldo mudou. Confira o valor atualizado antes de confirmar o acerto.');
     if (version !== current.version || balance?.amountCents !== amountCents) throw changed();
     const entry = { id: randomUUID(), kind: 'settlement', fromId, toId, amountCents, readVersion: version,
@@ -150,5 +188,5 @@ export function createFinance({ query, project, members, event, AppError }) {
     return entry;
   }
 
-  return { projectFinance, addExpense, settleFinance };
+  return { projectFinance, addExpense, settleFinance, addFinanceCategory, deleteExpense };
 }

@@ -1843,3 +1843,11 @@ html[data-palette=cyberpunk] .card:hover{box-shadow:0 0 0 1px #ff2a6d55,0 14px 2
   .btn.fin-btn, .fin-participants label { min-height: 44px; }
   .fin-form :is(input:not([type=checkbox]), select) { min-height: 44px; font-size: 16px; }
 }
+
+/* Categorias do financeiro: cada grupo tem seu próprio resumo. */
+.fin-category-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;margin-bottom:12px}
+.fin-category.btn{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:16px;min-width:0;white-space:normal;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--control-line)}
+.fin-category[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.fin-category span{font-size:1.35rem;color:var(--accent)}
+
+.team-chat-toast.btn{position:fixed;inset:auto 18px 80px auto;margin:0;width:min(340px,calc(100vw - 24px));padding:14px;text-align:left;white-space:normal;background:var(--surface);color:var(--ink);border:1px solid var(--accent);box-shadow:var(--shadow);z-index:2147483001}

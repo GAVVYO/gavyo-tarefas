@@ -126,3 +126,44 @@ test('Web e MCP exigem sessão, compartilham dados e atribuem o canal no servido
   assert.deepEqual((await call('ver_resumo_financeiro')).balances, web.balances);
   assert.equal(web.balances[0].amountCents, 12000);
 });
+
+test('categorias agrupam gastos e exclusão preserva auditoria com saldo recalculado', async t => {
+  const {store,project,other,actor,expense}=await fixture(t);
+  const category=await store.addFinanceCategory(project.id,{name:'IA'},actor);
+  assert.equal((await store.addFinanceCategory(project.id,{name:' ia '},actor)).id,category.id);
+  await assert.rejects(()=>store.addExpense(other.id,{...expense,categoryId:category.id},actor),{status:400});
+  const paid=await store.addExpense(project.id,{...expense,categoryId:category.id},actor);
+  let snapshot=await store.projectFinance(project.id);
+  assert.equal(snapshot.categories.length,1);
+  assert.equal(snapshot.expenses[0].categoryId,category.id);
+  assert.equal(snapshot.balances[0].amountCents,6000);
+  await assert.rejects(()=>store.deleteExpense(project.id,paid.id,{version:snapshot.version-1},actor),{status:409});
+  const removed=await store.deleteExpense(project.id,paid.id,{version:snapshot.version},actor);
+  assert.equal(removed.actor,actor.name);
+  snapshot=await store.projectFinance(project.id);
+  assert.deepEqual(snapshot.expenses,[]);
+  assert.deepEqual(snapshot.balances,[]);
+  assert.equal(snapshot.categories[0].name,'IA');
+  assert.equal(snapshot.deletions[0].expenseId,paid.id);
+  assert.equal((await store.deleteExpense(project.id,paid.id,{version:0},actor)).id,removed.id);
+  const rows=await store.projectFinance(other.id); assert.deepEqual(rows.categories,[]);
+  const retry=await store.addExpense(project.id,{...expense,operationId:paid.id,categoryId:category.id},actor);
+  assert.equal(retry.id,paid.id); assert.equal((await store.projectFinance(project.id)).expenses.length,0);
+});
+
+test('excluir uma renovação reabre seu vencimento; excluir a origem retira as parcelas dos saldos', async t => {
+  const {store,project,actor,expense}=await fixture(t);
+  const root=await store.addExpense(project.id,{...expense,frequency:'monthly'},actor);
+  let snapshot=await store.projectFinance(project.id);
+  const due=snapshot.renewals[0].dueOn;
+  const renewal=await store.addExpense(project.id,{...expense,paidOn:due,occurrence:{expenseId:root.id,dueOn:due}},actor);
+  snapshot=await store.projectFinance(project.id);
+  await store.deleteExpense(project.id,renewal.id,{version:snapshot.version},actor);
+  snapshot=await store.projectFinance(project.id);
+  assert.equal(snapshot.renewals[0].dueOn,due);
+  await store.addExpense(project.id,{...expense,paidOn:due,occurrence:{expenseId:root.id,dueOn:due}},actor);
+  snapshot=await store.projectFinance(project.id);
+  await store.deleteExpense(project.id,root.id,{version:snapshot.version},actor);
+  snapshot=await store.projectFinance(project.id);
+  assert.deepEqual(snapshot.expenses,[]); assert.deepEqual(snapshot.balances,[]); assert.deepEqual(snapshot.renewals,[]);
+});
