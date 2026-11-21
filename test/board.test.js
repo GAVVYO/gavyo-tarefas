@@ -95,7 +95,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   const mensagens = (await request(`/api/projects/${project.id}/messages`, { headers })).body;
   assert.deepEqual(mensagens.map((item) => item.source), ['Codex', 'Web']);
   const atividade = (await request(`/api/projects/${project.id}/activity`, { headers })).body;
-  assert.ok(atividade.items.some((item) => item.kind === 'contexto' && item.rejected));
+  assert.ok(atividade.items.every((item) => ['commit', 'pr'].includes(item.kind)));
   assert.ok(!(await request(`/api/projects/${project.id}/context/history`, { headers })).body.some((item) => item.kind === 'leitura'));
   const voltou = await request(`/api/projects/${project.id}/context/restore/1`, { method: 'POST', headers, body: { versaoLida: 2 } });
   assert.equal(voltou.body.regras, '');
