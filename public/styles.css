@@ -25,7 +25,9 @@ dialog.team-chat[open]{display:flex;flex-direction:column;animation:enter .18s v
 .team-chat-error .btn{margin-top:6px}
 .team-chat-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:12px 14px;scrollbar-gutter:stable}
 .team-chat-messages{display:flex;flex-direction:column;gap:12px}
-.team-chat-message{border-left:2px solid var(--control-line);padding:10px 12px;background:var(--well);overflow-wrap:anywhere}
+.team-chat-message{display:flex;align-items:flex-start;gap:10px;border-left:2px solid var(--control-line);padding:10px 12px;background:var(--well);overflow-wrap:anywhere}
+.team-chat-content{flex:1;min-width:0}
+.team-chat-avatar.face,.team-chat-avatar.avatar{width:38px;height:38px;flex:none}
 .team-chat-message[data-own=true]{border-color:var(--accent)}
 .team-chat-message strong{display:block;font-weight:800}
 .team-chat-message time{display:block;font-size:.86rem;color:var(--muted);margin:2px 0 7px}

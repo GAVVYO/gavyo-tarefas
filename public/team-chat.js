@@ -1,3 +1,5 @@
+import { avatarFor } from './profile-dock.js';
+
 /** Conversa global isolada do DOM do quadro e dos rascunhos dos cartões. */
 export function setupTeamChat({ request, onExpired }) {
   const trigger = document.createElement('button');
@@ -80,6 +82,15 @@ export function setupTeamChat({ request, onExpired }) {
       const article = document.createElement('article');
       article.className = 'team-chat-message';
       article.dataset.own = String(message.author.id === user.id);
+      const avatar = document.createElement('span');
+      const art = avatarFor(message.author.name);
+      avatar.className = `team-chat-avatar ${art ? 'face' : 'avatar'}`;
+      avatar.setAttribute('aria-hidden', 'true');
+      if (art) avatar.dataset.art = art;
+      else avatar.textContent = message.author.name.trim().split(/\s+/).slice(0, 2)
+        .map(part => Array.from(part)[0]).join('').toUpperCase();
+      const content = document.createElement('div');
+      content.className = 'team-chat-content';
       const by = document.createElement('strong');
       by.textContent = message.author.name;
       const time = document.createElement('time');
@@ -87,7 +98,8 @@ export function setupTeamChat({ request, onExpired }) {
       time.textContent = date.format(new Date(message.at));
       const text = document.createElement('p');
       text.textContent = message.text;
-      article.append(by, time, text);
+      content.append(by, time, text);
+      article.append(avatar, content);
       fragment.append(article);
     }
     if (prepend) {
