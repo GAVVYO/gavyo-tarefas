@@ -50,11 +50,7 @@ export async function serveMcp(req, res, store, actor) {
   add('atualizar_tarefa', 'Muda qualquer coisa de uma tarefa: título, descrição, responsável, prazo (AAAA-MM-DD), prioridade (alta/normal/baixa), etapa (todo, doing, done), travado (motivo; vazio destrava), passos (lista completa), arquivar (só concluídas) e comentário. Mande só o que muda.',
     { id: z.uuid(), ...patchCard.shape }, false, ({ id, ...patch }) => store.updateCard(id, patch, actor));
   add('ver_tarefa', 'Tudo de uma tarefa: descrição, passos, conversa, prints e histórico com autor e canal.',
-    { id: z.uuid() }, true, async ({ id }) => {
-      const card = (await store.listCards({})).concat(await store.listCards({ archived: true })).find((item) => item.id === id);
-      if (!card) throw new AppError(404, 'Tarefa não encontrada.');
-      return card;
-    });
+    { id: z.uuid() }, true, ({ id }) => store.getCard(id));
   add('atividade_projeto', 'Commits e PRs do GitHub do projeto (do repositório informado no contexto), do mais novo ao mais velho.',
     { projectId: z.uuid() }, true, async ({ projectId }) => {
       const ctx = await store.projectContext(projectId);

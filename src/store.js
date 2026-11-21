@@ -212,6 +212,16 @@ export function createStore({ query }) {
     return cards.sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
   }
 
+  async function getCard(id) {
+    const load = () => first('SELECT version, document FROM cards WHERE id = ?', [id]);
+    const row = await load();
+    if (!row) throw new AppError(404, 'Tarefa não encontrada.');
+    const card = decode(row);
+    if (card.number) return card;
+    await numberCards();
+    return decode(await load());
+  }
+
   async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
     return (await readCards(projectId)).filter((card) => card.archived === archived &&
       (!blocked || card.blocked) && (!assigneeId || card.assigneeId === assigneeId));
@@ -496,5 +506,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addAttachment, removeAttachment, cardFile };
 }
