@@ -262,6 +262,7 @@ function renderShell() {
         <p>${board.user.role === 'admin' ? 'Administrador' : 'Membro da equipe'}</p>
         ${button('Alterar PIN', 'change-pin', 'key-round', 'profile-pin')}
         <div id="bg-slot">${backgroundPicker()}</div>
+        <div class="notify-pref">${notifyPrefButton()}</div>
       </div>
     </aside>
   </div>`;
@@ -1200,6 +1201,15 @@ document.addEventListener('click', async (event) => {
       const text = action === 'copy-brief' ? agentBrief(cardById(card)) : control.dataset.text;
       await navigator.clipboard.writeText(text).catch(() => { throw new Error('Não deu para copiar. Tente de novo.'); });
       message(action === 'copy-brief' ? 'Copiado. Cole no Claude ou no Codex: ele já sabe o que fazer.' : control.dataset.done);
+    } else if (action === 'open-notice') {
+      dismissBubble(control.closest('.bubble'));
+      openFromNotice(card);
+    } else if (action === 'close-notice') {
+      dismissBubble(control.closest('.bubble'));
+    } else if (action === 'notify-ask') {
+      await Notification.requestPermission();
+      root.querySelector('.notify-pref').innerHTML = notifyPrefButton();
+      if (Notification.permission === 'granted') message('Pronto: quando chegar mensagem com você em outra aba, o navegador avisa.');
     } else if (action === 'context-edit') {
       await editContext(control.dataset.focus);
     } else if (action === 'context-cancel') {
@@ -1497,6 +1507,107 @@ function paintPresence() {
   }
 }
 
+/* ---------- Avisos: balão na tela e notificação do navegador ---------- */
+let unread = 0;
+const baseTitle = document.title;
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function notifyPrefButton() {
+  if (!('Notification' in window)) return '<p class="notify-note">Este navegador não mostra avisos fora da aba.</p>';
+  if (Notification.permission === 'granted') return `<p class="notify-note is-on">${icon('bell-ring')}Avisos fora da aba ligados</p>`;
+  if (Notification.permission === 'denied') return '<p class="notify-note">Avisos bloqueados no navegador. Libere nas configurações do site.</p>';
+  return button('Avisar quando eu estiver em outra aba', 'notify-ask', 'bell', 'ghost notify-ask');
+}
+
+/** O que mudou para mim entre duas leituras do quadro. */
+function detectNews(before, after) {
+  if (!before || !after) return;
+  const me = after.user;
+  const first = me.name.split(' ')[0];
+  const mention = new RegExp(`(^|[^\\p{L}])@?${escapeRegExp(first)}(?![\\p{L}])`, 'iu');
+  const previous = new Map([...before.cards, ...before.archive].map((card) => [card.id, card]));
+  for (const card of after.cards) {
+    const old = previous.get(card.id);
+    const seen = old ? old.comments.length : card.comments.length;
+    const talkedBefore = card.comments.slice(0, seen).some((item) => item.actor === me.name);
+    for (const item of card.comments.slice(seen)) {
+      if (item.actor === me.name && item.source === 'Web') continue;
+      if (card.assigneeId === me.id || talkedBefore || mention.test(item.text)) {
+        notify({ card, who: item.actor, source: item.source, text: item.text, kind: 'mensagem' });
+      }
+    }
+    const last = card.history.at(-1);
+    if (old && old.assigneeId !== me.id && card.assigneeId === me.id && !(last.actor === me.name && last.source === 'Web')) {
+      notify({ card, who: last.actor, source: last.source, text: `Passou ${card.key || 'um cartão'} para você.`, kind: 'cartão' });
+    }
+  }
+}
+
+function openFromNotice(cardId) {
+  const card = cardById(cardId);
+  if (!card) return;
+  showCard(card);
+  setTaskSection('conversation');
+}
+
+function notify(news) {
+  const who = memberNamed(news.who);
+  const by = AGENTS.includes(news.source) ? `${news.who} pelo ${news.source}` : news.who;
+  if (document.hidden) {
+    unread++;
+    document.title = `(${unread}) ${baseTitle}`;
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const shown = new Notification(`${by} · ${news.card.key || news.card.title}`, {
+        body: news.text.slice(0, 160), icon: '/aguia-dourada.svg', tag: `${news.card.id}-${news.kind}`
+      });
+      shown.onclick = () => { window.focus(); openFromNotice(news.card.id); shown.close(); };
+    }
+    return;
+  }
+  showBubble(news, who, by);
+}
+
+/** Balão de fala que sai do avatar de quem mandou (ou do canto, se o mural não estiver à vista). */
+function showBubble(news, who, by) {
+  const stack = document.querySelector('.bubbles') || document.body.appendChild(Object.assign(document.createElement('div'), { className: 'bubbles' }));
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.setAttribute('role', 'status');
+  bubble.innerHTML = `${face(who, 'card-face')}
+    <div class="bubble-body"><p class="bubble-by"><b>${escape(by)}</b> em ${escape(news.card.key || '')} ${escape(news.card.title.slice(0, 40))}</p>
+      <p class="bubble-text">${escape(news.text.slice(0, 140))}${news.text.length > 140 ? '…' : ''}</p></div>
+    <button type="button" class="bubble-open" data-action="open-notice" data-card="${news.card.id}">Abrir</button>
+    <button type="button" class="bubble-close" data-action="close-notice" aria-label="Fechar aviso">${icon('x')}</button>`;
+  const figure = view === 'board' && root.querySelector(`.figure[data-person="${board.members.find((member) => member.name === news.who)?.id}"] .figure-stage`);
+  const stageRect = figure?.getBoundingClientRect();
+  const figureRect = figure?.closest('.figure').getBoundingClientRect();
+  const rect = stageRect && { left: stageRect.left, width: stageRect.width, top: stageRect.top, bottom: figureRect.bottom };
+  if (rect && rect.bottom > 70 && rect.top < innerHeight - 160) {
+    // Sai do avatar: o balão nasce embaixo da pessoa, com a ponta apontando para ela.
+    bubble.classList.add('is-anchored');
+    document.body.append(bubble);
+    const width = Math.min(340, innerWidth - 24);
+    const left = Math.max(12, Math.min(innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
+    bubble.style.setProperty('--x', `${left}px`);
+    bubble.style.setProperty('--y', `${rect.bottom + 10}px`);
+    bubble.style.setProperty('--tail', `${rect.left + rect.width / 2 - left}px`);
+    figure.closest('.figure').classList.add('talking');
+    setTimeout(() => figure.closest('.figure')?.classList.remove('talking'), 900);
+  } else stack.prepend(bubble);
+  const timer = setTimeout(() => dismissBubble(bubble), 8000);
+  bubble.addEventListener('mouseenter', () => clearTimeout(timer), { once: true });
+}
+
+function dismissBubble(bubble) {
+  if (!bubble?.isConnected) return;
+  bubble.classList.add('leaving');
+  setTimeout(() => bubble.remove(), 260);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && unread) { unread = 0; document.title = baseTitle; }
+});
+
 const boardSyncDelay = 3000;
 let autoTimer;
 let syncingBoard = false;
@@ -1539,7 +1650,9 @@ async function syncBoard() {
     if (!board || revision !== boardRevision || document.hidden || boardIsBusy()) return;
     if (snapshot) {
       const { projects, preferences } = board;
+      const before = board;
       acceptBoard(snapshot);
+      detectNews(before, board);
       const headingChanged = JSON.stringify(projects) !== JSON.stringify(board.projects);
       if (headingChanged) updateProjectHeading();
       if (JSON.stringify(preferences) !== JSON.stringify(board.preferences)) {
