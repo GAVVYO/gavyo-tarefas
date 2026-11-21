@@ -20,6 +20,9 @@ dialog.team-chat{position:fixed;inset:12px 12px 12px auto;margin:0;width:min(460
 dialog.team-chat[open]{display:flex;flex-direction:column;animation:enter .18s var(--ease)}
 .team-chat .dialog-head{flex-shrink:0;gap:12px}
 .team-chat .dialog-head p{font-size:.93rem;margin-top:3px}
+.team-chat-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.team-chat-heading>div{min-width:0}
+.team-chat-mark{width:52px;height:38px;flex:none;object-fit:contain;transform:translateY(-2px) rotate(-12deg);filter:drop-shadow(0 2px 6px color-mix(in srgb,var(--accent) 18%,transparent))}
 .team-chat-feedback{padding:8px 14px 0;flex-shrink:0;min-height:28px;color:var(--muted)}
 .team-chat-error{padding:10px 14px;color:var(--red);flex-shrink:0;border-bottom:1px solid var(--line)}
 .team-chat-error .btn{margin-top:6px}

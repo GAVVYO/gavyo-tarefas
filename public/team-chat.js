@@ -19,7 +19,10 @@ export function setupTeamChat({ request, onExpired }) {
   panel.className = 'team-chat';
   panel.setAttribute('aria-labelledby', 'team-chat-title');
   panel.innerHTML = `<header class="dialog-head">
-    <div><h2 id="team-chat-title">Chat da equipe</h2><p class="muted">Uma conversa para todos os projetos</p></div>
+    <div class="team-chat-heading">
+      <img class="team-chat-mark" src="/aguia-dourada.svg" alt="" aria-hidden="true" width="52" height="38">
+      <div><h2 id="team-chat-title">Chat da equipe</h2><p class="muted">Uma conversa para todos os projetos</p></div>
+    </div>
     <button type="button" class="btn ghost team-chat-close" aria-label="Fechar chat da equipe">Fechar</button>
   </header>
   <div class="team-chat-feedback" role="status" aria-live="polite"></div>
