@@ -30,6 +30,9 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   };
 
   assert.equal((await request('/api/board')).status, 401);
+  // Cache: ícones e fonte guardados por 7 dias; o app sempre conferido.
+  assert.match((await fetch(`${origin}/assets/icons/plus.svg`)).headers.get('cache-control'), /max-age=604800/);
+  assert.equal((await fetch(`${origin}/app.js`)).headers.get('cache-control'), 'no-cache');
   assert.equal((await request('/mcp')).status, 401);
   const profiles = await request('/api/profiles');
   assert.deepEqual(profiles.body, [{ id: member.id, name: member.name }]);
@@ -103,6 +106,12 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   assert.equal(viaWeb.body.objetivo, 'Publicar o quadro');
   assert.equal(viaWeb.body.updated.source, 'Web');
   assert.equal((await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } })).status, 400);
+  // O erro diz o que corrigir, em português (antes: sempre "Confira os campos informados.").
+  const badLink = await request(`/api/projects/${project.id}/context`, { method: 'PUT', headers, body: { versaoLida: 3, links: [{ title: 'x', url: 'javascript:alert(1)' }] } });
+  assert.match(badLink.body.error, /http ou https/);
+  const longTitle = await request('/api/cards', { method: 'POST', headers, body: { projectId: project.id, title: 'x'.repeat(200) } });
+  assert.equal(longTitle.status, 400);
+  assert.match(longTitle.body.error, /^Título: /);
 
   const initialBoard = await request('/api/board', { headers });
   const unchangedBoard = () => request('/api/board', {
@@ -326,4 +335,26 @@ test('webhook do GitHub: só aceita assinatura certa e o push entra na linha do 
   assert.equal(events[0].message, 'Primeiro commit');
   const activity = await store.projectActivity(project.id, events);
   assert.ok(activity.some((item) => item.kind === 'commit' && item.short === 'aaaaaaa'));
+});
+
+test('custo: ler o quadro não relê todos os cartões nem projetos e membros a cada vez', async () => {
+  const database = await openDatabase({ path: ':memory:' });
+  let queries = [];
+  const counted = { ...database, query: (sql, args) => { queries.push(sql); return database.query(sql, args); } };
+  const store = createStore(counted);
+  const member = await store.createMember({ name: 'João' });
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  await store.createCard({ projectId: project.id, title: 'Um' }, { ...member, source: 'Web' });
+  await store.boardCards();
+  queries = [];
+  await store.boardCards();
+  assert.equal(queries.filter((sql) => /FROM cards/.test(sql)).length, 1, queries.join('\n'));
+  await Promise.all([store.projects(), store.members()]);
+  queries = [];
+  await Promise.all([store.projects(), store.members()]);
+  assert.equal(queries.length, 0, queries.join('\n'));
+  // Projeto novo aparece na hora (o cache é limpo ao gravar).
+  await store.createProject({ name: 'Outro' });
+  assert.equal((await store.projects()).length, 2);
+  await database.close();
 });
