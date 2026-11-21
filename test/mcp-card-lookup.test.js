@@ -24,10 +24,15 @@ test('ver_tarefa consulta somente o cartão pelo ID, inclusive no arquivo', asyn
   await store.updateCard(archived.id, { status: 'done', archived: true, comment: 'Conferido' }, actor);
   const { token } = await store.issue(member.id, 'Codex', 1);
   const server = createApp(store).listen(0, '127.0.0.1');
-  t.after(() => new Promise((resolve) => server.close(resolve)));
   await once(server, 'listening');
   const client = new Client({ name: 'teste', version: '1.0.0' });
-  t.after(() => client.close());
+  t.after(async () => {
+    await client.close();
+    await new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+  });
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${server.address().port}/mcp`), {
     requestInit: { headers: { authorization: `Bearer ${token}` } }
   }));
