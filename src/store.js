@@ -607,6 +607,40 @@ export function createStore({ query }) {
     if (latest) latest[projectId] = message;
     return message;
   }
+  const chatQuery = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    before: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    after: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
+  }).strict().refine(q => q.before === undefined || q.after === undefined, 'Use before ou after, não os dois.');
+  const chatInput = z.object({ text: text(4000), clientId: z.uuid() }).strict();
+  const chatRow = row => ({ ...JSON.parse(row.data), sequence: Number(row.sequence) });
+  async function teamMessages(input) {
+    const { limit, before, after } = chatQuery.parse(input);
+    const ascending = after !== undefined;
+    const where = before !== undefined ? 'WHERE sequence < ?' : ascending ? 'WHERE sequence > ?' : '';
+    const cursor = before ?? after;
+    // Limite numérico já validado; só os cursores entram como parâmetros.
+    const rows = await query(`SELECT sequence, data FROM team_messages ${where} ORDER BY sequence ${ascending ? 'ASC' : 'DESC'} LIMIT ${limit + 1}`, cursor === undefined ? [] : [cursor]);
+    const hasMore = rows.length > limit;
+    const messages = rows.slice(0, limit).map(chatRow);
+    if (!ascending) messages.reverse();
+    return { messages, hasMore, nextBefore: messages[0]?.sequence ?? null,
+      nextAfter: messages.at(-1)?.sequence ?? after ?? null };
+  }
+  async function addTeamMessage(input, actor) {
+    const { text, clientId } = chatInput.parse(input);
+    const message = { id: clientId, text, author: { id: actor.id, name: actor.name }, at: new Date().toISOString() };
+    try {
+      await query('INSERT INTO team_messages (id, member_id, data) VALUES (?, ?, ?)', [clientId, actor.id, JSON.stringify(message)]);
+    } catch (error) {
+      if (error.code !== 'ER_DUP_ENTRY' && !/UNIQUE constraint failed/.test(error.message)) throw error;
+      const existing = await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]);
+      const previous = existing && chatRow(existing);
+      if (!previous || previous.author.id !== actor.id || previous.text !== text) throw new AppError(409, 'Identificador de mensagem já usado.');
+      return previous;
+    }
+    return chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
+  }
   async function restoreContext(projectId, version, input, actor) {
     const row = await contextRow(projectId);
     const current = contextOf(row);
@@ -619,5 +653,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }
