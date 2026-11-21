@@ -747,7 +747,7 @@ function showCard(card, origin, focus = true) {
       ${card.archived ? '' : `<label class="step-add">${icon('plus')}<input data-add-step="${card.id}" maxlength="240" placeholder="Adicionar passo e Enter" aria-label="Novo passo"></label>`}
     </section>
     ${prints.length ? `<ul class="prints">${prints.map((item, index) => `<li><button type="button" class="print" data-action="view-print"
-      data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${prints.length}"><img src="${fileUrl(card, item)}" alt="" loading="lazy"></button></li>`).join('')}</ul>` : ''}
+      data-card="${card.id}" data-index="${index}" aria-label="Abrir print ${index + 1} de ${prints.length}"><img src="${fileUrl(card, item)}" alt="" loading="lazy" decoding="async"></button></li>`).join('')}</ul>` : ''}
     <div class="activity-head">
       <nav class="inspector-nav" aria-label="Atividade do cartão">
         ${button('Conversa', 'task-section', '', 'ghost', 'data-section="conversation" aria-pressed="true"')}
@@ -984,7 +984,7 @@ function cardActivity(card) {
     const body = entry.kind === 'text'
       ? `<p class="message-text">${linkify(entry.text)}</p>`
       : `<button type="button" class="message-image" data-action="view-print" data-card="${card.id}" data-index="${entry.index}" aria-label="Abrir print de ${escape(entry.actor)}">
-          <img src="${fileUrl(card, entry.item)}" alt="" loading="lazy"></button>`;
+          <img src="${fileUrl(card, entry.item)}" alt="" loading="lazy" decoding="async"></button>`;
     return `<div class="message" data-grouped="${Boolean(grouped)}">
       ${grouped ? '<span class="message-gutter" aria-hidden="true"></span>' : face(memberNamed(entry.actor), 'card-face')}
       <div class="message-body">${grouped ? '' : `<p class="message-by"><strong>${escape(entry.actor)}</strong>${agentMark(entry.source)}<small>${when(entry.at)}</small></p>`}${body}</div>

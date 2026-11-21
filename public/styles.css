@@ -1438,3 +1438,10 @@ html:not([data-bg=noite]) .column{backdrop-filter:none;background:color-mix(in s
 .figure[data-online=true] .figure-stage::after{animation:online-pop 2.6s ease-in-out infinite;box-shadow:0 0 0 3px var(--background)}
 @keyframes online-pop{50%{scale:1.22}}
 .editor-done{background:var(--accent);color:var(--accent-text)}
+/* 6. Ficha sem desfoque ao vivo: o fundo escuro já esconde o quadro, então o vidro
+   vira um tom quase opaco com brilho na borda. Era isso que travava ao abrir o cartão. */
+.task-dialog{backdrop-filter:none;-webkit-backdrop-filter:none;background:linear-gradient(180deg,#25201af7,#1c1915f7);box-shadow:0 40px 90px -30px #000,inset 0 1px #ffffff14}
+/* 7. Mensagens fora da vista não são desenhadas até a conversa rolar até elas. */
+.thread .message{content-visibility:auto;contain-intrinsic-size:auto 64px}
+.thread .message:has(.message-image){contain-intrinsic-size:auto 240px}
+html[data-editing=sheet] .editor-side{backdrop-filter:none;-webkit-backdrop-filter:none}
