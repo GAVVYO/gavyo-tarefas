@@ -1042,6 +1042,8 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .card .card-project{color:var(--accent);font-size:.786rem;font-weight:650;margin:0}
 .card .card-head details.menu{position:static;margin:0 0 0 auto}
 .card .card-head details.menu summary{width:24px;height:24px}
+/* No toque, o alvo do menu tem 40px sem mexer no desenho do cartão. */
+@media(pointer:coarse){.card .card-head details.menu summary{width:40px;height:40px;margin:-8px}}
 .card .card-head .card-who{position:static;margin-left:2px}
 .card .card-head details.menu:not([open])~.card-who{margin-left:auto}
 .card .card-head details.menu~.card-who{margin-left:2px}

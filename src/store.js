@@ -175,23 +175,59 @@ export function createStore({ query }) {
   const projectKey = (name) => (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[A-Za-z0-9]+/g) || ['GT'])
     .map((word) => word[0]).join('').slice(0, 3).toUpperCase().padEnd(2, 'T');
   /** Numera cartões antigos (de antes dos números). Só roda quando a leitura acha um cartão sem número. */
-  async function numberCards() {
-    const rows = await query('SELECT id, project_id, version, document FROM cards');
-    const cards = rows.map((row) => ({ row, card: JSON.parse(row.document) }));
-    const missing = cards.filter(({ card }) => !card.number);
-    if (!missing.length) return;
-    const projectsById = new Map((await projects()).map((item) => [item.id, item]));
-    const next = new Map();
-    for (const { card } of cards) if (card.number) next.set(card.projectId, Math.max(next.get(card.projectId) || 0, card.number));
-    missing.sort((a, b) => a.card.history[0].at.localeCompare(b.card.history[0].at));
-    for (const { row, card } of missing) {
-      const number = (next.get(card.projectId) || 0) + 1;
-      next.set(card.projectId, number);
-      card.number = number;
-      card.key = `${projectKey(projectsById.get(card.projectId)?.name || 'GT')}-${number}`;
-      normalizeChecklist(card);
-      await query('UPDATE cards SET document = ? WHERE id = ? AND version = ?', [JSON.stringify(card), row.id, row.version]);
+  async function numberCards(projectId) {
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const rows = projectId
+        ? await query('SELECT id, version, document FROM cards WHERE project_id = ?', [projectId])
+        : await query('SELECT id, version, document FROM cards');
+      const cards = rows.map((row) => ({ row, card: JSON.parse(row.document) }));
+      const next = new Map();
+      for (const { card } of cards) {
+        if (card.number) next.set(card.projectId, Math.max(next.get(card.projectId) || 0, card.number));
+      }
+      const missing = cards.filter(({ card }) => !card.number).sort((a, b) =>
+        a.card.history[0].at.localeCompare(b.card.history[0].at) || a.row.id.localeCompare(b.row.id));
+      if (!missing.length) return next.get(projectId) || 0;
+
+      const projectsById = new Map((await projects()).map((item) => [item.id, item]));
+      let saved = 0;
+      for (const { row, card } of missing) {
+        const number = (next.get(card.projectId) || 0) + 1;
+        card.number = number;
+        card.key = `${projectKey(projectsById.get(card.projectId)?.name || 'GT')}-${number}`;
+        normalizeChecklist(card);
+        const result = await query('UPDATE cards SET document = ?, version = ? WHERE id = ? AND version = ?',
+          [JSON.stringify(card), row.version + 1, row.id, row.version]);
+        if (!result.affectedRows) break;
+        next.set(card.projectId, number);
+        saved++;
+      }
+      if (saved === missing.length) return next.get(projectId) || 0;
     }
+    throw new AppError(409, 'A numeração dos cartões mudou. Tente novamente.');
+  }
+
+  async function reserveCardNumber(projectId) {
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const row = await first('SELECT last_number FROM card_numbers WHERE project_id = ?', [projectId]);
+      if (row) {
+        const number = row.last_number + 1;
+        const result = await query('UPDATE card_numbers SET last_number = ? WHERE project_id = ? AND last_number = ?',
+          [number, projectId, row.last_number]);
+        if (result.affectedRows) return number;
+      } else {
+        // Só a primeira criação após a migração precisa olhar os cartões antigos.
+        const number = (await numberCards(projectId)) + 1;
+        try {
+          await query('INSERT INTO card_numbers (project_id, last_number) VALUES (?, ?)', [projectId, number]);
+          return number;
+        } catch (error) {
+          // Outra instância pode ter inicializado o contador enquanto numerávamos os cartões.
+          if (error.code !== 'ER_DUP_ENTRY' && error.errcode !== 1555) throw error;
+        }
+      }
+    }
+    throw new AppError(409, 'Não foi possível reservar o número do cartão. Tente novamente.');
   }
 
   async function createCard(input, actor) {
@@ -199,10 +235,7 @@ export function createStore({ query }) {
     const owner = await project(fields.projectId);
     if (!owner) throw new AppError(404, 'Projeto não encontrado.');
     await validateAssignee(fields.assigneeId);
-    await numberCards();
-    const numbers = (await query('SELECT document FROM cards WHERE project_id = ?', [fields.projectId]))
-      .map((row) => JSON.parse(row.document).number || 0);
-    const number = Math.max(0, ...numbers) + 1;
+    const number = await reserveCardNumber(fields.projectId);
     const card = {
       ...fields, id: randomUUID(), number, key: `${projectKey(owner.name)}-${number}`, status: 'todo', blocked: '', archived: false, checklist: [], attachments: [],
       comments: [], history: [event(actor, 'Criou o cartão')]
@@ -252,8 +285,18 @@ export function createStore({ query }) {
       ? await query('SELECT version, document FROM cards WHERE project_id = ?', [projectId])
       : await query('SELECT version, document FROM cards')).map(decode);
     let cards = await load();
-    if (cards.some((card) => !card.number)) { await numberCards(); cards = await load(); }
+    if (cards.some((card) => !card.number)) { await numberCards(projectId); cards = await load(); }
     return cards.sort((a, b) => b.history[0].at.localeCompare(a.history[0].at));
+  }
+
+  async function getCard(id) {
+    const load = () => first('SELECT version, document FROM cards WHERE id = ?', [id]);
+    const row = await load();
+    if (!row) throw new AppError(404, 'Tarefa não encontrada.');
+    const card = decode(row);
+    if (card.number) return card;
+    await numberCards();
+    return decode(await load());
   }
 
   async function listCards({ projectId, assigneeId, archived = false, blocked = false } = {}) {
@@ -317,6 +360,7 @@ export function createStore({ query }) {
       if (expectedVersion != null && version !== expectedVersion) break;
       card.attachments ??= [];
       const result = change(card);
+      if (result === false) return { card: { ...card, version }, result };
       card.history.push(event(actor, action));
       const saved = await query('UPDATE cards SET document = ?, version = ? WHERE id = ? AND version = ?',
         [JSON.stringify(card), version + 1, id, version]);
@@ -343,8 +387,9 @@ export function createStore({ query }) {
   async function updateStep(id, stepId, input, actor, version) {
     const patch = stepPatch.parse(input);
     const { card } = await changeCard(id, (current) => {
-      const index = stepIndex(current, stepId);
-      Object.assign(current.checklist[index], patch);
+      const step = current.checklist[stepIndex(current, stepId)];
+      if (Object.entries(patch).every(([key, value]) => step[key] === value)) return false;
+      Object.assign(step, patch);
     }, actor, 'Editou passo', version);
     return card;
   }
@@ -569,9 +614,10 @@ export function createStore({ query }) {
     const rows = await query('SELECT data FROM context_history WHERE project_id = ?', [projectId]);
     const target = rows.map((r) => JSON.parse(r.data)).find((entry) => entry.kind === 'versao' && entry.version === version);
     if (!target) throw new AppError(404, 'Versão não encontrada.');
-    const patch = Object.fromEntries(CONTEXT_FIELDS.map((key) => [key, target.snapshot[key] ?? current[key]]));
+    const patch = Object.fromEntries(CONTEXT_FIELDS.filter((key) => Object.hasOwn(target.snapshot, key))
+      .map((key) => [key, target.snapshot[key]]));
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }

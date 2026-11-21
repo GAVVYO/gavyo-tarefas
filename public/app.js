@@ -389,9 +389,9 @@ function cardTemplate(card) {
   const signals = [
     blocked ? `<button type="button" class="sig sig-blocked" data-action="view-block" data-card="${card.id}" title="${escape(card.blocked)}">${icon('octagon-pause')}Travado</button>` : '',
     due ? `<span class="sig due" data-tone="${due.tone}"><time datetime="${card.due}">${due.text}</time></span>` : '',
-    steps ? `<span class="sig" data-full="${checks === steps}" aria-label="${checks} de ${steps} passos feitos">${icon('list-checks')}${checks}/${steps}</span>` : '',
-    card.comments.length ? `<span class="sig" aria-label="${card.comments.length} mensagens">${icon('message-square')}${card.comments.length}</span>` : '',
-    prints ? `<span class="sig" aria-label="${prints} prints">${icon('image')}${prints}</span>` : '',
+    steps ? `<span class="sig" data-full="${checks === steps}">${icon('list-checks')}<span aria-hidden="true">${checks}/${steps}</span><span class="sr-only">${checks} de ${steps} passos feitos</span></span>` : '',
+    card.comments.length ? `<span class="sig">${icon('message-square')}<span aria-hidden="true">${card.comments.length}</span><span class="sr-only">${card.comments.length === 1 ? '1 mensagem' : `${card.comments.length} mensagens`}</span></span>` : '',
+    prints ? `<span class="sig">${icon('image')}<span aria-hidden="true">${prints}</span><span class="sr-only">${prints === 1 ? '1 print' : `${prints} prints`}</span></span>` : '',
     agent ? `<span class="sig card-agent" data-live="${live}" title="${live ? `${agent} está mexendo neste cartão agora` : `Última mudança feita pelo ${agent}`}">${icon('bot')}${live ? `${agent} agora` : agent}</span>` : ''
   ].join('');
   return `<article class="card ${moved === card.id ? 'moved' : ''}" data-id="${card.id}" data-status="${card.status}"
@@ -1615,6 +1615,18 @@ function viewPrint(cardId, index) {
   document.body.append(viewer);
   viewer.querySelector('[data-action=close-viewer]').focus();
 }
+
+// O visualizador é modal: Tab e Shift+Tab giram só entre os botões dele.
+document.addEventListener('keydown', (event) => {
+  const viewer = document.querySelector('.viewer');
+  if (event.key !== 'Tab' || !viewer) return;
+  const items = [...viewer.querySelectorAll('a[href], button:not(:disabled)')];
+  if (!items.length) return;
+  const at = items.indexOf(document.activeElement);
+  const next = event.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : (at === -1 || at === items.length - 1 ? 0 : at + 1);
+  event.preventDefault();
+  items[next].focus();
+});
 
 // Esc fecha a ficha (ela não é modal, para o visualizador de prints poder ficar por cima).
 document.addEventListener('keydown', (event) => {

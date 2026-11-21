@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { AppError, pinInput, sources } from './store.js';
 import { serveMcp } from './mcp.js';
-import { recentCommits } from './github.js';
+import { mergeGithubActivity, recentCommits } from './github.js';
 
 const file = (path) => fileURLToPath(new URL(path, import.meta.url));
 const credential = (req) => /(?:^|;\s*)gavyo_session=([\w-]{43})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
@@ -177,18 +177,19 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     res.json(await store.updateCard(z.uuid().parse(req.params.id), req.body, req.actor, version));
   });
 
+  const stepVersion = z.int().positive().optional();
   app.post('/api/cards/:id/steps', async (req, res) => {
-    const version = z.int().positive().parse(req.body.version);
+    const version = stepVersion.parse(req.body?.version);
     res.status(201).json(await store.addStep(z.uuid().parse(req.params.id), req.body, req.actor, version));
   });
   app.patch('/api/cards/:id/steps/:stepId', async (req, res) => {
-    const version = z.int().positive().parse(req.body.version);
+    const version = stepVersion.parse(req.body?.version);
     const id = z.uuid().parse(req.params.id);
     const stepId = z.uuid().parse(req.params.stepId);
     res.json(await store.updateStep(id, stepId, req.body, req.actor, version));
   });
   app.delete('/api/cards/:id/steps/:stepId', async (req, res) => {
-    const version = z.int().positive().parse(req.body.version);
+    const version = stepVersion.parse(req.body?.version);
     const id = z.uuid().parse(req.params.id);
     const stepId = z.uuid().parse(req.params.stepId);
     res.json(await store.removeStep(id, stepId, req.actor, version));
@@ -248,10 +249,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     const id = z.uuid().parse(req.params.id);
     const ctx = await store.projectContext(id);
     const [github, pushed] = await Promise.all([commits(ctx.repositorio, ctx.branch), store.githubEvents(ctx.repositorio, ctx.branch)]);
-    const seen = new Set(pushed.map((item) => item.id));
-    const merged = [...pushed, ...github.commits.map((item) => ({ kind: 'commit', id: `commit:${item.sha}`, ...item })).filter((item) => !seen.has(item.id))];
-    // A aba Atividade é só do GitHub: commits e PRs, do mais novo para o mais velho.
-    const items = merged.filter((item) => item.at).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+    const items = mergeGithubActivity(pushed, github.commits).slice(0, 200);
     res.json({ items, note: pushed.length ? '' : github.note, version: ctx.version, repository: ctx.repositorio || '' });
   });
   app.get('/api/projects/:id/messages', async (req, res) => res.json(await store.projectMessages(z.uuid().parse(req.params.id))));
