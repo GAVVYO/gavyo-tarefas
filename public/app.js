@@ -1246,15 +1246,8 @@ function openEditor(cardId, { pin = false, prop } = {}) {
   editor.querySelectorAll('.editor-option, .editor-done').forEach((item, index) => item.style.setProperty('--i', index));
   document.documentElement.dataset.editing = narrow ? 'sheet' : 'side';
   dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'true');
-  editor.addEventListener('mouseenter', () => clearTimeout(editorCloseTimer));
-  editor.addEventListener('mouseleave', () => scheduleEditorClose());
   requestAnimationFrame(() => editor?.classList.add('is-open'));
   if (prop) openEditPanel(prop);
-}
-
-function scheduleEditorClose() {
-  if (!editor || editor.dataset.mode === 'pin') return;
-  editorCloseTimer = setTimeout(closeEditor, 260);
 }
 
 function closeEditor() {
@@ -1262,7 +1255,6 @@ function closeEditor() {
   if (!editor) return;
   const leaving = editor;
   editor = null;
-  hoverPaused = true;
   closePopover();
   delete document.documentElement.dataset.editing;
   dialog.querySelector('.edit-trigger')?.setAttribute('aria-expanded', 'false');
@@ -1563,19 +1555,6 @@ document.addEventListener('keydown', (event) => {
   dialog.close();
 });
 
-// Passar o mouse no Editar mostra as opções; o clique fixa.
-// Ao fechar, a ficha desliza de volta e o botão passa por baixo do mouse parado: isso não pode reabrir.
-// O passar-o-mouse só volta a valer quando o mouse se mexe de verdade.
-let hoverPaused = false;
-document.addEventListener('pointermove', (event) => { if (event.movementX || event.movementY) hoverPaused = false; }, { passive: true });
-document.addEventListener('mouseover', (event) => {
-  const trigger = event.target.closest?.('.edit-trigger');
-  if (trigger && !hoverPaused && matchMedia('(hover: hover)').matches) openEditor(trigger.dataset.card);
-});
-document.addEventListener('mouseout', (event) => {
-  const trigger = event.target.closest?.('.edit-trigger');
-  if (trigger && !trigger.contains(event.relatedTarget) && !event.relatedTarget?.closest?.('.editor-side')) scheduleEditorClose();
-});
 // Título no modo editar: Enter grava.
 document.addEventListener('keydown', async (event) => {
   const box = event.target.closest?.('[data-edit-field=title]');
