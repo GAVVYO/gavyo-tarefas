@@ -49,5 +49,9 @@ export async function openDatabase({ url = process.env.DATABASE_URL, path = '.da
     sequence ${url ? 'BIGINT PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
     id VARCHAR(36) UNIQUE NOT NULL, member_id VARCHAR(36) NOT NULL,
     data MEDIUMTEXT NOT NULL, FOREIGN KEY (member_id) REFERENCES members(id))`);
+  await query(`CREATE TABLE IF NOT EXISTS team_reactions (
+    sequence ${url ? 'BIGINT PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+    message_id VARCHAR(36) NOT NULL, member_id VARCHAR(36) NOT NULL, emoji VARCHAR(16) NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES team_messages(id), FOREIGN KEY (member_id) REFERENCES members(id))`);
   return { query, close };
 }

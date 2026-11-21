@@ -36,4 +36,21 @@ test('chat: imagens autenticadas, autoria de anexos, cartões e reenvio idempote
  assert.equal((await post(ca,{clientId:randomUUID(),cards:[randomUUID()]})).status,404);
  assert.equal((await post(ca,{clientId:randomUUID(),images:Array(5).fill(image.id)})).status,400);
  const history=await (await fetch(base+'/api/team/messages',{headers:{cookie:cb}})).json();assert.equal(history.messages.length,1);assert.equal(history.messages[0].images[0].id,image.id);
+ const replyPayload={clientId:randomUUID(),text:'Oi @Felipe 👍',replyTo:message.id,mentions:[b.id]};
+ const reply=await (await post(ca,replyPayload)).json();
+ assert.equal(reply.reply.id,message.id);assert.equal(reply.reply.author.id,a.id);assert.equal(reply.mentions[0].name,'Felipe');
+ assert.equal((await post(ca,replyPayload)).status,201);
+ assert.equal((await post(ca,{...replyPayload,replyTo:null})).status,409);
+ assert.equal((await post(ca,{clientId:randomUUID(),text:'teste',replyTo:randomUUID()})).status,404);
+ assert.equal((await post(ca,{clientId:randomUUID(),text:'teste',mentions:[randomUUID()]})).status,404);
+ const react=(cookie,emoji,id=message.id)=>fetch(`${base}/api/team/messages/${id}/reaction`,{method:'POST',headers:{...(cookie?{cookie}:{}),'content-type':'application/json'},body:JSON.stringify({emoji})});
+ assert.equal((await react(null,'👍')).status,401);
+ assert.equal((await react(ca,'inválido')).status,400);
+ assert.equal((await react(ca,'👍',randomUUID())).status,404);
+ await Promise.all([react(ca,'👍'),react(cb,'❤️')]);
+ let reactions=await store.teamReactions([message.id]);assert.equal(reactions.length,2);
+ await react(ca,'👩🏽‍💻');reactions=await store.teamReactions([message.id]);assert.equal(reactions.find(r=>r.member_id===a.id).emoji,'👩🏽‍💻');
+ await react(ca,'');reactions=await store.teamReactions([message.id]);assert.equal(reactions.length,1);assert.equal(reactions[0].member_id,b.id);
+ assert.ok(await store.teamReactionRevision()>0);
+
 });

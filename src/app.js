@@ -170,6 +170,8 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     if (!bytes) throw new AppError(404, 'Imagem não encontrada.');
     res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=604800' }).send(bytes);
   });
+  app.get('/api/team/reactions', async (req, res) => res.json(await store.teamReactions(String(req.query.ids || '').split(','))));
+  app.post('/api/team/messages/:id/reaction', async (req, res) => res.json(await store.reactTeamMessage(req.params.id, req.body, req.actor)));
   app.get('/api/team/messages', async (req, res) => res.json(await store.teamMessages(req.query)));
   app.get('/api/team/messages/stream', async (req, res) => {
     const cursor = req.get('Last-Event-ID') ?? req.query.after ?? '0';
@@ -178,6 +180,7 @@ export function createApp(store, { production = false, origin = '', uploads = pr
       'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 1000\n\n');
+    let reactionRevision = -1;
     let closed = false, draining = false, queued = false, heartbeat = 0;
     const stop = () => { closed = true; clearInterval(timer); unsubscribe(); };
     const drain = async () => {
@@ -189,6 +192,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
           queued = false;
           // A autorização continua valendo durante a conexão, não só na abertura.
           if (!(await store.identity(credential(req), 'Web'))) { res.end(); stop(); return; }
+          const revision = await store.teamReactionRevision();
+          if (reactionRevision !== revision) {
+            reactionRevision = revision;
+            res.write(`event: reactions-changed\ndata: ${revision}\n\n`);
+          }
           const page = await store.teamMessages({ after, limit: 100 });
           if (closed) return;
           if (page.messages.length) {

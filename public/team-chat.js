@@ -1,7 +1,8 @@
+import { mountEmojiPicker } from './chat-emoji-picker.js';
 import { avatarFor } from './profile-dock.js';
 
 /** Conversa global isolada do DOM do quadro e dos rascunhos dos cartões. */
-export function setupTeamChat({ request, onExpired, getCards, onCard }) {
+export function setupTeamChat({ request, onExpired, getCards, getMembers, onCard }) {
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.className = 'btn team-chat-trigger';
@@ -33,10 +34,13 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     <div class="team-chat-messages" role="log" aria-label="Mensagens da equipe" aria-live="polite" aria-relevant="additions"></div>
   </div>
   <form class="team-chat-form">
+    <div class="chat-reply-draft" hidden></div>
+    <div class="chat-suggestions" hidden></div>
     <label for="team-chat-text">Mensagem para a equipe</label>
     <div class="team-chat-tools team-chat-composer">
       <label class="btn team-chat-upload" title="Adicionar imagem"><span aria-hidden="true">+</span><input class="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="Escolher imagens para o chat"></label>
       <textarea id="team-chat-text" rows="1" maxlength="4000" placeholder="Escreva sua mensagem…"></textarea>
+      <button class="btn chat-emoji-toggle" type="button" aria-label="Escolher emoji" aria-expanded="false">😊</button>
       <button class="btn primary team-chat-send" type="submit" aria-label="Enviar mensagem" title="Enviar mensagem"><span aria-hidden="true">↑</span></button>
     </div>
     <div class="team-chat-attachments" aria-live="polite"></div>
@@ -62,9 +66,97 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
   toast.addEventListener('click', open);
   let messages = [], hasOlder = false, retrySend = false, pendingMessage = null;
   let attachments = [], mentioned = [], uploading = false;
+  let replyTo = null, people = [], reactionRows = [], reactionBusy = new Set(), refreshRunning = false, refreshAgain = false;
+  const suggestions = find('.chat-suggestions'), replyDraft = find('.chat-reply-draft');
+  let suggestionMode = null;
+  function button(label, action, className = 'btn') {
+    const el = document.createElement('button'); el.type = 'button'; el.className = className; el.textContent = label; el.onclick = action; return el;
+  }
+  function setReply(message) {
+    replyTo = message; replyDraft.replaceChildren(); replyDraft.hidden = !message;
+    if (message) {
+      const quote = document.createElement('div');
+      const author = document.createElement('strong'); author.textContent = `Respondendo a ${message.author.name}`;
+      const text = document.createElement('span'); text.textContent = message.text || (message.images?.length ? 'Imagem' : 'Cartão');
+      quote.append(author, text);
+      const cancel = button('×', () => setReply(null)); cancel.setAttribute('aria-label','Cancelar resposta');
+      replyDraft.append(quote, cancel); input.focus();
+    }
+  }
+  function hideSuggestions() { suggestions.hidden = true; suggestionMode = null; find('.chat-emoji-toggle').setAttribute('aria-expanded','false'); }
+  function emojis(message) {
+    suggestions.hidden = false; suggestionMode = 'emoji';
+    find('.chat-emoji-toggle').setAttribute('aria-expanded','true');
+    mountEmojiPicker(suggestions, {
+      reaction: Boolean(message),
+      onClose: () => { hideSuggestions(); input.focus(); },
+      onChoose: emoji => {
+        if (message) { void react(message, emoji); hideSuggestions(); }
+        else {
+          input.setRangeText(emoji, input.selectionStart, input.selectionEnd, 'end');
+          resizeComposer(); input.setCustomValidity(''); input.focus();
+        }
+      }
+    });
+  }
+  find('.chat-emoji-toggle').onclick = () => suggestionMode === 'emoji' ? hideSuggestions() : emojis();
+  function suggestPeople() {
+    const match = input.value.slice(0, input.selectionStart).match(/(?:^|\s)@([^@\n]*)$/);
+    if (!match) { if (suggestionMode === 'people') hideSuggestions(); return; }
+    const query = match[1].toLocaleLowerCase('pt-BR');
+    const matches = (getMembers?.() || []).filter(p => p.name.toLocaleLowerCase('pt-BR').includes(query)).slice(0,8);
+    suggestions.replaceChildren(); suggestions.hidden = false; suggestionMode = 'people';
+    for (const person of matches) suggestions.append(button(`@${person.name}`, () => {
+      if (!people.some(p => p.id === person.id) && people.length < 20) people.push(person);
+      const end = input.selectionStart, start = end - match[1].length - 1;
+      input.setRangeText(`@${person.name} `, start, end, 'end'); hideSuggestions(); renderPending(); resizeComposer(); input.focus();
+    }, 'btn chat-person'));
+    if (!matches.length) suggestions.textContent = 'Nenhuma pessoa encontrada.';
+  }
+  function renderReactions() {
+    for (const article of log.querySelectorAll('[data-message-id]')) {
+      const tray = article.querySelector('.chat-reactions'); tray.replaceChildren();
+      const rows = reactionRows.filter(r => r.message_id === article.dataset.messageId);
+      for (const emoji of new Set(rows.map(r => r.emoji))) {
+        const votes = rows.filter(r => r.emoji === emoji); if (!votes.length) continue;
+        const mine = votes.some(r => r.member_id === user?.id);
+        const names = votes.map(r => (getMembers?.() || []).find(p => p.id === r.member_id)?.name || 'Pessoa da equipe');
+        const chip = button(`${emoji} ${votes.length}`, () => void react({id:article.dataset.messageId}, emoji), 'btn chat-reaction');
+        chip.setAttribute('aria-pressed',String(mine)); chip.setAttribute('aria-label', `${emoji}: ${names.join(', ')}. ${mine ? 'Remover sua reação' : 'Reagir'}`); chip.title = names.join(', '); tray.append(chip);
+      }
+    }
+  }
+  async function refreshReactions() {
+    if (!user || !panel.open || !messages.length) return;
+    if (refreshRunning) { refreshAgain = true; return; }
+    refreshRunning = true; const current = session;
+    try {
+      do {
+        refreshAgain = false; const rows = [];
+        for (let i = 0; i < messages.length; i += 100) rows.push(...await request(`/team/reactions?ids=${messages.slice(i,i+100).map(m => m.id).join(',')}`));
+        if (current !== session) return;
+        reactionRows = rows; renderReactions();
+      } while (refreshAgain && panel.open);
+    } catch { if (current === session) feedback.textContent = 'Não foi possível atualizar as reações.'; }
+    finally { refreshRunning = false; }
+  }
+  async function react(message, emoji) {
+    if (!user || reactionBusy.has(message.id)) return;
+    reactionBusy.add(message.id); const current = session;
+    const mine = reactionRows.find(r => r.message_id === message.id && r.member_id === user.id);
+    try {
+      await request(`/team/messages/${message.id}/reaction`, 'POST', { emoji: mine?.emoji === emoji ? '' : emoji });
+      if (current === session) await refreshReactions();
+    } catch { if (current === session) feedback.textContent = 'Não foi possível reagir. Tente novamente.'; }
+    finally { reactionBusy.delete(message.id); }
+  }
   const pending = find('.team-chat-attachments');
   function renderPending() {
     pending.replaceChildren();
+    people.forEach(person => {
+      const chip = button(`@${person.name} ×`, () => { people = people.filter(p => p.id !== person.id); renderPending(); });
+      chip.setAttribute('aria-label', `Remover menção a ${person.name}`); pending.append(chip);
+    });
     attachments.forEach(image => {
       const chip = document.createElement('span'); chip.className = 'team-chat-chip';
       const img = document.createElement('img'); img.src = image.url; img.alt = 'Imagem para enviar';
@@ -202,7 +294,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     const fragment = document.createDocumentFragment();
     for (const message of fresh.sort((a, b) => a.sequence - b.sequence)) {
       const article = document.createElement('article');
-      article.className = 'team-chat-message';
+      article.className = 'team-chat-message'; article.dataset.messageId = message.id;
       article.dataset.own = String(message.author.id === user.id);
       const avatar = document.createElement('span');
       const art = avatarFor(message.author.name);
@@ -220,7 +312,26 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       time.textContent = date.format(new Date(message.at));
       const text = document.createElement('p');
       text.textContent = message.text;
-      content.append(by, time, text);
+      content.append(by, time);
+      if (message.reply) {
+        const quote = button(`${message.reply.author.name}: ${message.reply.text}`, () => {
+          const original = [...log.children].find(el => el.dataset.messageId === message.reply.id);
+          if (original) { original.scrollIntoView({block:'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'}); original.classList.add('chat-highlight'); setTimeout(() => original.classList.remove('chat-highlight'),1500); }
+          else feedback.textContent = 'A mensagem original está no histórico. Carregue as mensagens antigas.';
+        }, 'chat-quote'); content.append(quote);
+      }
+      content.append(text);
+      if (message.mentions?.length) {
+        const tags = document.createElement('div'); tags.className = 'chat-mentions';
+        tags.textContent = message.mentions.filter(p => !message.text.includes(`@${p.name}`)).map(p => `@${p.name}`).join(' ');
+        if (message.mentions.some(p => p.id === user.id)) article.classList.add('chat-mentioned');
+        content.append(tags);
+      }
+      const actions = document.createElement('div'); actions.className = 'chat-message-actions';
+      actions.append(button('Responder', () => { if (!sending) setReply(message); }), button('😊', () => emojis(message)));
+      actions.lastChild.setAttribute('aria-label', `Reagir à mensagem de ${message.author.name}`);
+      content.append(actions);
+      const reactions = document.createElement('div'); reactions.className = 'chat-reactions'; content.append(reactions);
       for (const image of message.images || []) {
         const link = document.createElement('a'); link.href = image.url; link.target = '_blank'; link.rel = 'noopener'; link.setAttribute('aria-label', 'Abrir imagem da mensagem');
         const img = document.createElement('img'); img.src = image.url; img.alt = 'Imagem compartilhada'; img.className = 'team-chat-image'; img.loading = 'lazy';
@@ -244,6 +355,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       if (nearBottom || messages.length === fresh.length) scroll.scrollTop = scroll.scrollHeight;
       else if (fresh.length) feedback.textContent = 'Há novas mensagens no final da conversa.';
     }
+    void refreshReactions();
     empty.hidden = messages.length > 0;
     empty.textContent = 'Ainda não há mensagens. Comece a conversa.';
   }
@@ -253,6 +365,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     const current = session;
     const source = new EventSource(`/api/team/messages/stream?after=${liveCursor}`);
     stream = source;
+    source.addEventListener('reactions-changed', () => { if (current === session) void refreshReactions(); });
     source.addEventListener('messages', event => {
       if (current !== session || stream !== source) return;
       const incoming = JSON.parse(event.data);
@@ -405,13 +518,14 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (sending || uploading || !user) return;
+    hideSuggestions();
     const text = input.value.trim();
     if ((!text && !attachments.length && !mentioned.length) || text.length > 4000) { input.setCustomValidity('Escreva uma mensagem com até 4000 caracteres.'); input.reportValidity(); return; }
     const current = session;
-    const draft = { text, images: attachments.map(i => i.id), cards: mentioned.map(c => c.id) };
+    const draft = { text, images: attachments.map(i => i.id), cards: mentioned.map(c => c.id), replyTo: replyTo?.id || null, mentions: people.map(p => p.id) };
     if (!pendingMessage || JSON.stringify(pendingMessage.draft) !== JSON.stringify(draft)) pendingMessage = { ...draft, clientId: crypto.randomUUID(), draft };
     const { draft: ignoredDraft, ...payload } = pendingMessage;
-    sending = true; find('.team-chat-tools').inert = true; pending.inert = true;
+    sending = true; replyDraft.inert = true; find('.team-chat-tools').inert = true; pending.inert = true;
     input.disabled = true;
     send.disabled = true;
     send.textContent = '…';
@@ -420,7 +534,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       await request('/team/messages', 'POST', payload, { signal: AbortSignal.timeout(15000) });
       if (current !== session) return;
       // Buscar pelo cursor mantém a ordem se outra pessoa enviou durante a escrita.
-      input.value = ''; resizeComposer(); attachments = []; mentioned = []; renderPending();
+      input.value = ''; resizeComposer(); setReply(null); people = []; hideSuggestions(); attachments = []; mentioned = []; renderPending();
       pendingMessage = null;
       errorBox.hidden = true;
       retrySend = false;
@@ -430,12 +544,12 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
       if (current === session) { feedback.textContent = ''; fail(error, true); }
     } finally {
       if (current === session) {
-        sending = false; find('.team-chat-tools').inert = false; pending.inert = false; input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
+        sending = false; replyDraft.inert = false; find('.team-chat-tools').inert = false; pending.inert = false; input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';
         if (panel.open) input.focus({ preventScroll: true });
       }
     }
   });
-  input.addEventListener('input', () => { input.setCustomValidity(''); resizeComposer(); });
+  input.addEventListener('input', () => { input.setCustomValidity(''); resizeComposer(); suggestPeople(); });
   window.addEventListener('resize', () => { if (panel.open) resizeComposer(); });
 
   // Captura antes dos atalhos do cartão, menus e visualizador de prints.
@@ -445,11 +559,14 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     if (shortcut) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (panel.open) panel.close(); else open();
+    } else if (panel.open && event.target.matches('.chat-emoji-picker input') && event.key === 'Enter') {
+      event.preventDefault(); event.stopImmediatePropagation();
     } else if (panel.open && event.target === input && event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (!sending && !uploading && (input.value.trim() || attachments.length || mentioned.length)) form.requestSubmit();
     } else if (panel.open && event.key === 'Escape' && !event.isComposing) {
-      event.preventDefault(); event.stopImmediatePropagation(); panel.close();
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (!suggestions.hidden) { hideSuggestions(); input.focus(); } else panel.close();
     } else if (panel.open) {
       // O diálogo nativo cuida do Tab; atalhos antigos não devem agir na tela inferior.
       event.stopImmediatePropagation();
@@ -463,7 +580,7 @@ export function setupTeamChat({ request, onExpired, getCards, onCard }) {
     disconnect();
     user = next;
     if (panel.open) panel.close();
-    clearDrag();
+    clearDrag(); replyDraft.inert = false; setReply(null); people = []; reactionRows = []; hideSuggestions();
     attachments = []; mentioned = []; uploading = false; find('.team-chat-tools').inert = false; pending.inert = false; renderPending();
     messages = []; hasOlder = false; pendingMessage = null; sending = false;
     input.value = ''; resizeComposer(); input.disabled = false; send.disabled = false; send.innerHTML = '<span aria-hidden="true">↑</span>';

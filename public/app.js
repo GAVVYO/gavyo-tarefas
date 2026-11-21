@@ -31,7 +31,7 @@ let restoreFocus;
 let boardTag;
 let boardRevision = 0;
 let pendingWrites = 0;
-const teamChat = setupTeamChat({ request, onExpired: endBoardSession, getCards: () => [...(board?.cards || []), ...(board?.archive || [])], onCard: id => { const card = cardById(id); if (card) showCard(card); else message('Cartão não encontrado. Atualize o quadro.'); } });
+const teamChat = setupTeamChat({ request, onExpired: endBoardSession, getMembers: () => board?.members || [], getCards: () => [...(board?.cards || []), ...(board?.archive || [])], onCard: id => { const card = cardById(id); if (card) showCard(card); else message('Cartão não encontrado. Atualize o quadro.'); } });
 
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
