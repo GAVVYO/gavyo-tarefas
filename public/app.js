@@ -2,6 +2,7 @@ import { renderTaskCalendar } from './task-calendar.js';
 import { playCardFlight } from './card-flight.js';
 import { avatarFor, setupProfileDock } from './profile-dock.js';
 import { setupTeamChat } from './team-chat.js';
+import { setupProjectFinance } from './project-finance.js';
 
 const root = document.querySelector('#root');
 const dialog = document.querySelector('#dialog');
@@ -583,6 +584,8 @@ function nextStep(id) {
 
 function hostOf(url) { return url.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 
+const projectFinance = setupProjectFinance({ request, escape, openDialog, dialog, icon, message, onExpired: endBoardSession });
+
 /* ---------- Central de projetos ---------- */
 function renderHub(content) {
   const id = projectId;
@@ -614,11 +617,7 @@ function renderHub(content) {
   panel.setAttribute('aria-labelledby', `hub-tab-${hubSector}`);
   if (hubSector !== 'atividade') clearTimeout(hubTimer);
   if (hubSector === 'contexto') { if (!contextEditing) void renderContext(panel); return; }
-  if (hubSector === 'financeiro') {
-    panel.innerHTML = `<div class="hub-soon">${icon('wallet')}<h2>Financeiro do projeto</h2>
-      <p>Gastos com domínio, hospedagem e APIs, quem pagou e quanto cada sócio precisa acertar. Chega na próxima etapa.</p></div>`;
-    return;
-  }
+  if (hubSector === 'financeiro') { projectFinance.render(panel, id, board); return; }
   if (!panel.querySelector('.hub-activity')) {
     panel.innerHTML = `<div class="hub-activity">
       <section class="hub-tree" aria-labelledby="hub-tree-title">
