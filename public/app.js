@@ -1608,21 +1608,39 @@ function showBubble(news, who, by) {
       <p class="bubble-text">${escape(news.text.slice(0, 140))}${news.text.length > 140 ? '…' : ''}</p></div>
     <button type="button" class="bubble-open" data-action="open-notice" data-card="${news.card.id}">Abrir</button>
     <button type="button" class="bubble-close" data-action="close-notice" aria-label="Fechar aviso">${icon('x')}</button>`;
+  // 1º o próprio cartão que recebeu a mensagem; se ele não estiver à vista, o avatar de quem mandou; senão, o canto.
+  const cardEl = root.querySelector(`.card[data-id="${news.card.id}"]`);
+  const cardRect = cardEl?.getBoundingClientRect();
   const figure = view === 'board' && root.querySelector(`.figure[data-person="${board.members.find((member) => member.name === news.who)?.id}"] .figure-stage`);
   const stageRect = figure?.getBoundingClientRect();
-  const figureRect = figure?.closest('.figure').getBoundingClientRect();
-  const rect = stageRect && { left: stageRect.left, width: stageRect.width, top: stageRect.top, bottom: figureRect.bottom };
-  if (rect && rect.bottom > 70 && rect.top < innerHeight - 160) {
-    // Sai do avatar: o balão nasce embaixo da pessoa, com a ponta apontando para ela.
-    bubble.classList.add('is-anchored');
-    document.body.append(bubble);
-    const width = Math.min(340, innerWidth - 24);
-    const left = Math.max(12, Math.min(innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
-    bubble.style.setProperty('--x', `${left}px`);
-    bubble.style.setProperty('--y', `${rect.bottom + 10}px`);
-    bubble.style.setProperty('--tail', `${rect.left + rect.width / 2 - left}px`);
+  const width = Math.min(340, innerWidth - 24);
+  let anchor = null;
+  if (cardRect && cardRect.bottom > 70 && cardRect.top < innerHeight - 40) {
+    const below = innerHeight - cardRect.bottom > 170;
+    anchor = { center: cardRect.left + Math.min(cardRect.width / 2, 120), y: below ? cardRect.bottom + 10 : cardRect.top - 10, above: !below };
+    cardEl.classList.add('has-news');
+    setTimeout(() => cardEl.classList.remove('has-news'), 2400);
+  } else if (stageRect && stageRect.bottom > 70 && stageRect.top < innerHeight - 160) {
+    const figureRect = figure.closest('.figure').getBoundingClientRect();
+    anchor = { center: stageRect.left + stageRect.width / 2, y: figureRect.bottom + 10, above: false };
     figure.closest('.figure').classList.add('talking');
     setTimeout(() => figure.closest('.figure')?.classList.remove('talking'), 900);
+  }
+  if (anchor) {
+    bubble.classList.add('is-anchored');
+    if (anchor.above) bubble.classList.add('is-above');
+    document.body.append(bubble);
+    const left = Math.max(12, Math.min(innerWidth - width - 12, anchor.center - width / 2));
+    bubble.style.setProperty('--x', `${left}px`);
+    bubble.style.setProperty('--y', `${anchor.y}px`);
+    bubble.style.setProperty('--tail', `${anchor.center - left}px`);
+    // Rolar o quadro leva o balão junto com o cartão.
+    const follow = () => {
+      if (!bubble.isConnected || !cardEl?.isConnected) return window.removeEventListener('scroll', follow);
+      const r = cardEl.getBoundingClientRect();
+      bubble.style.setProperty('--y', `${anchor.above ? r.top - 10 : r.bottom + 10}px`);
+    };
+    if (cardRect) window.addEventListener('scroll', follow, { passive: true });
   } else stack.prepend(bubble);
   const timer = setTimeout(() => dismissBubble(bubble), 8000);
   bubble.addEventListener('mouseenter', () => clearTimeout(timer), { once: true });

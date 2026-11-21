@@ -1199,3 +1199,8 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .column.drop .empty{display:none}
 .card.moved{animation:land .5s cubic-bezier(.2,1.2,.4,1)}
 @keyframes land{0%{transform:translateY(-8px) scale(1.02);box-shadow:0 0 0 2px var(--accent)}100%{transform:none;box-shadow:0 0 0 0 transparent}}
+/* Balão em cima do cartão: acima dele, a ponta aponta para baixo. */
+.bubble.is-above{transform:translateY(-100%);transform-origin:var(--tail) 100%}
+.bubble.is-above::before{top:auto;bottom:-8px;border:0;border-right:1px solid #e9bf6e40;border-bottom:1px solid #e9bf6e40;border-radius:0 0 4px 0}
+.card.has-news{border-color:var(--accent);box-shadow:0 0 0 3px #e9bf6e33;animation:news-knock .6s var(--ease)}
+@keyframes news-knock{20%{translate:0 -3px}40%{translate:0 0}60%{translate:0 -1.5px}}
