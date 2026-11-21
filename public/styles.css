@@ -104,6 +104,8 @@ nav,.top-actions,.row,.filters,.card-meta,.chips{display:flex;align-items:center
 .nav-btn[data-action=board]{grid-column:1}
 .nav-btn[data-action=mine]{grid-column:2}
 .nav-btn[data-action=archive]{grid-column:3}
+.nav-btn[data-action=context]{grid-column:4}
+.nav-btn[data-action=company]{grid-column:5}
 .top-actions{justify-content:flex-end;flex-wrap:nowrap;gap:2px}
 .account{display:flex;align-items:center;gap:8px;min-width:0;margin-right:4px;padding:3px 12px 3px 3px;border:0;background:transparent;border-radius:var(--radius-pill);transition:background .15s}
 .account:hover{background:var(--hover)}
@@ -1112,8 +1114,9 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .card .card-head details.menu,.card .card-head details.menu~.card-who,.card .card-head details.menu:not([open])~.card-who{margin:0}
 
 /* ---------- Aba Contexto ---------- */
-.workspace-nav{grid-template-columns:repeat(4,max-content)}
+.workspace-nav{grid-template-columns:repeat(5,max-content)}
 .workspace-nav[data-view=context] .nav-pill{grid-column:4}
+.workspace-nav[data-view=company] .nav-pill{grid-column:5}
 .nav-btn[data-action=context]{grid-column:4}
 .ctx{display:grid;gap:16px;margin-top:6px}
 .ctx-loading{min-height:320px}
@@ -1159,7 +1162,7 @@ html:not([data-bg=noite]) .column{background:color-mix(in srgb,var(--column-fill
 .ctx-editing .ctx-bar{position:sticky;top:8px;z-index:2;padding:8px 8px 8px 14px;border-radius:var(--radius-pill);background:var(--raised);box-shadow:var(--shadow)}
 @media(max-width:1000px){.ctx-grid{grid-template-columns:1fr}}
 @media(max-width:710px){
-  .workspace-nav{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .workspace-nav{grid-template-columns:repeat(5,minmax(0,1fr))}
   .ctx-card{padding:14px}
   .ctx-link-row{grid-template-columns:1fr auto}
   .ctx-link-row [name=link-url]{grid-column:1}
@@ -1889,3 +1892,120 @@ dialog.team-chat[open]{overflow:hidden;box-shadow:0 24px 80px #0009;border:1px s
 .team-chat-card-results .btn{display:block;padding:10px 12px;border:0;border-bottom:1px solid var(--line);background:transparent;line-height:1.4}
 .team-chat-card-results .btn:hover{background:var(--hover)}
 @media(prefers-reduced-motion:reduce){.team-chat-trigger.team-chat-over{transform:none}}
+
+/* ---------- Tela Empresa ---------- */
+.company{display:grid;gap:18px;margin-top:10px}
+.company-head{display:grid;gap:4px}
+.company-head h1{margin:0;font-size:clamp(1.6rem,2.4vw,2.1rem);letter-spacing:-.02em}
+.company-head p{margin:0;font-size:.93rem}
+
+/* Fichário: as abas são divisórias presas no topo do mural, cada uma com sua etiqueta de papel. */
+.binder{--binder:var(--well)}
+.binder-top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:0 10px}
+.binder-tabs{display:flex;align-items:flex-end;gap:2px}
+.binder-tab{position:relative;display:grid;place-items:center;min-height:52px;padding:9px 16px 0;border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;
+  background:color-mix(in srgb,var(--binder) 55%,var(--background));translate:0 7px;transition:translate .25s var(--ease),background .2s}
+.binder-tab:hover{translate:0 3px}
+.binder-tab[aria-current=page]{z-index:2;translate:0 1px;background:var(--binder);padding-bottom:6px}
+.binder-tab[aria-current=page]::after{content:'';position:absolute;left:0;right:0;bottom:-2px;height:4px;background:var(--binder)}
+.binder-label{--label:#efe6d2;display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 10px;border-radius:4px;color:#2d2720;font-size:.86rem;font-weight:800;
+  background:var(--label);box-shadow:0 1px 0 #00000026,inset 0 -2px 0 #0000000f;rotate:-1.2deg;opacity:.8;transition:opacity .2s,rotate .25s var(--ease)}
+.binder-label .icon{width:15px;height:15px;filter:brightness(.15)}
+.binder-tab[data-company-tab=agenda] .binder-label{--label:#fbeb9b;rotate:.8deg}
+.binder-tab[data-company-tab=caixa] .binder-label{--label:#cfe8c4;rotate:-.6deg}
+.binder-tab:hover .binder-label,.binder-tab[aria-current=page] .binder-label{opacity:1}
+.binder-tab[aria-current=page] .binder-label{rotate:0deg}
+.binder-tab:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.binder .notes-wall{border-top-left-radius:4px}
+
+/* Bloco de folhas: a folha de cima descola ao passar o mouse; clicar arranca uma folha nova. */
+.note-pad{position:relative;width:150px;height:58px;margin-bottom:-14px;z-index:3;border:0;padding:0;background:none;cursor:pointer}
+.note-pad-sheet,.note-pad-top{position:absolute;inset:0;border-radius:3px;background:#f3ecdc;box-shadow:0 1px 1px #0003}
+.note-pad-sheet:nth-child(1){translate:5px 6px;rotate:2.5deg;background:#e7dfcc}
+.note-pad-sheet:nth-child(2){translate:2px 3px;rotate:-1.5deg;background:#ede5d3}
+.note-pad-top{display:flex;align-items:center;gap:8px;white-space:nowrap;padding:0 12px 0 34px;color:#2d2720;font-weight:800;font-size:.93rem;transform-origin:left top;
+  background:linear-gradient(90deg,transparent 24px,#e0707099 24px 26px,transparent 26px),repeating-linear-gradient(180deg,transparent 0 13px,#7ea7d440 13px 14px),#f8f2e4;
+  box-shadow:0 2px 3px #0003,0 10px 18px -10px #000a;transition:rotate .3s var(--ease),translate .3s var(--ease),box-shadow .3s}
+.note-pad-top::before{content:'';position:absolute;top:-4px;left:10px;right:10px;height:7px;border-radius:2px;
+  background:repeating-linear-gradient(90deg,#8d7c62 0 3px,transparent 3px 11px)}
+.note-pad-plus{display:grid;place-items:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-text);font-weight:900;line-height:1}
+.note-pad:hover .note-pad-top,.note-pad:focus-visible .note-pad-top{rotate:-4deg;translate:-2px -5px;box-shadow:0 4px 6px #0003,0 18px 26px -12px #000c}
+.note-pad:active .note-pad-top{rotate:-9deg;translate:-6px -10px}
+.note-pad:focus-visible{outline:none}
+.note-pad:focus-visible .note-pad-top{outline:3px solid var(--accent);outline-offset:3px}
+.company-soon{display:grid;justify-items:center;gap:6px;padding:72px 16px;text-align:center;border:1px dashed var(--line);border-radius:var(--radius-panel)}
+.company-soon .icon{width:36px;height:36px;opacity:.5}
+.company-soon h2{margin:6px 0 0;font-size:1.15rem}
+
+.notes-wall{position:relative;height:var(--wall-height,560px);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+  background:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--ink) 9%,transparent) 1px,transparent 1.5px) 0 0/24px 24px,var(--well)}
+.notes-empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:10px;text-align:center;color:var(--muted);pointer-events:none}
+.notes-empty .icon{width:40px;height:40px;opacity:.45}
+.notes-empty p{margin:0;line-height:1.6}
+
+/* A folha: papel, margem vermelha, linhas azuis e um pedaço de fita no topo. */
+.note{--paper:#f8f2e4;--ink-note:#2d2720;--rule:#7ea7d455;--margin-line:#e0707099;
+  position:absolute;left:var(--x,0);top:var(--y,0);width:260px;min-height:190px;padding:14px 16px 16px 44px;rotate:var(--tilt,0deg);
+  color:var(--ink-note);border-radius:3px 3px 6px 3px;cursor:grab;touch-action:none;user-select:none;
+  background:linear-gradient(90deg,transparent 33px,var(--margin-line) 33px 35px,transparent 35px),
+    repeating-linear-gradient(180deg,transparent 0 25px,var(--rule) 25px 26px) 0 58px/100% calc(100% - 58px) no-repeat,var(--paper);
+  box-shadow:0 1px 1px #0000002e,0 10px 22px -12px #000000b3,inset 0 -18px 22px -22px #0000004d;
+  transition:box-shadow .2s var(--ease),scale .2s var(--ease),rotate .25s var(--ease)}
+.note::before{content:'';position:absolute;top:-9px;left:50%;width:74px;height:20px;translate:-50% 0;rotate:-3deg;
+  background:#fffbe9b3;border:1px solid #0000000f;box-shadow:0 1px 2px #0000001f}
+.note[data-color=amarelo]{--paper:#fdf0a6}
+.note[data-color=azul]{--paper:#dce9fa;--margin-line:#d9707080}
+.note[data-color=verde]{--paper:#dff1d6}
+.note[data-color=rosa]{--paper:#fbe1e7}
+.note:hover{box-shadow:0 1px 1px #0000002e,0 18px 30px -14px #000000c0,inset 0 -18px 22px -22px #0000004d}
+.note:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+.note.is-dragging{z-index:5;cursor:grabbing;rotate:0deg;scale:1.04;box-shadow:0 30px 50px -18px #000000d9;transition:scale .15s var(--ease),rotate .15s var(--ease)}
+.note-head{display:flex;align-items:center;gap:9px;margin:0 0 10px -30px;min-height:32px}
+.note-head span{display:grid;line-height:1.2;min-width:0}
+.note-head b{font-size:.86rem;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note-head time{font-size:.75rem;color:color-mix(in srgb,var(--ink-note) 60%,transparent)}
+.note-face{width:30px;height:30px;flex:none;border-radius:50%;box-shadow:0 0 0 2px var(--paper),0 0 0 3px #00000026}
+.note-face.avatar{display:grid;place-items:center;font-size:.72rem;background:#2d272022;color:var(--ink-note)}
+.note-title{margin:0 0 2px;font-size:1.02rem;font-weight:800;line-height:26px;letter-spacing:-.01em}
+.note-text{margin:0;font-size:.9rem;line-height:26px;white-space:pre-wrap;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical;overflow:hidden}
+.note-empty{color:color-mix(in srgb,var(--ink-note) 45%,transparent);font-style:italic}
+
+/* Notas abertas: flutuam na lateral, por cima do site, sem bloquear o resto. */
+.note-dock{position:fixed;z-index:70;top:86px;right:16px;bottom:16px;width:330px;display:flex;flex-direction:column;gap:18px;
+  overflow:auto;padding:12px 6px 12px 12px;pointer-events:none;scrollbar-width:thin}
+.note-dock[data-count='0']{display:none}
+.note.note-open{position:relative;left:auto;top:auto;width:auto;flex:none;rotate:0deg;cursor:default;user-select:text;touch-action:auto;pointer-events:auto;
+  min-height:0;box-shadow:0 2px 2px #0000002e,0 24px 44px -18px #000000e0}
+.note-open .note-head{margin-bottom:6px}
+.note-close{margin-left:auto;display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--ink-note)}
+.note-close:hover{background:#0000000f}
+.note-close .icon,.note-delete .icon{width:16px;height:16px;filter:brightness(.2)}
+.note-title-input,.note-text-input{display:block;width:100%;border:0;background:transparent;color:var(--ink-note);padding:0;font:inherit}
+.note-title-input{font-size:1.02rem;font-weight:800;line-height:26px}
+.note-text-input{font-size:.92rem;line-height:26px;resize:vertical;min-height:156px}
+.note-title-input::placeholder,.note-text-input::placeholder{color:color-mix(in srgb,var(--ink-note) 45%,transparent)}
+.note-title-input:focus-visible,.note-text-input:focus-visible{outline:0;background:#ffffff40}
+.note-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 0 -28px;padding-top:8px;border-top:1px dashed #00000022}
+.note-colors{display:flex;gap:6px}
+.note-swatch{width:24px;height:24px;border-radius:50%;border:2px solid #00000026;padding:0}
+.note-swatch[data-color=papel]{background:#f8f2e4}.note-swatch[data-color=amarelo]{background:#fdf0a6}.note-swatch[data-color=azul]{background:#dce9fa}
+.note-swatch[data-color=verde]{background:#dff1d6}.note-swatch[data-color=rosa]{background:#fbe1e7}
+.note-swatch[aria-pressed=true]{border-color:var(--ink-note);box-shadow:0 0 0 2px var(--paper),0 0 0 3px var(--ink-note)}
+.note-delete{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:#9b2c2c;font-size:.82rem;font-weight:700}
+.note-delete:hover,.note-delete[data-confirm=true]{background:#c5303014}
+
+/* Arrastando para a borda: a lateral acende, dizendo que a nota vai com você. */
+html.note-to-edge::after{content:'Levar comigo';position:fixed;z-index:69;top:0;right:0;bottom:0;width:72px;display:grid;place-items:center;
+  writing-mode:vertical-rl;font-weight:800;letter-spacing:.08em;color:var(--accent-text);
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 85%,transparent));pointer-events:none}
+
+@media(max-width:710px){
+  .binder-top{padding:0 4px;gap:8px}.binder-tab{padding-inline:8px}.binder-label{padding-inline:8px;font-size:.8rem}
+  .note-pad{width:118px}.note-pad-top{padding:0 8px 0 30px;font-size:.84rem;gap:6px}
+  .notes-wall{height:auto;padding:22px 14px;display:grid;gap:22px}
+  .note{position:relative;left:auto;top:auto;width:auto;rotate:0deg;cursor:pointer;touch-action:auto}
+  .note-dock{top:auto;left:0;right:0;bottom:0;width:auto;max-height:72dvh;padding:12px;gap:12px}
+  html[data-note-open] .team-chat-trigger{visibility:hidden}
+}
+@media(prefers-reduced-motion:reduce){.note,.note.is-dragging{transition:none}}
