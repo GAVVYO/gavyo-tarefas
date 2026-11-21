@@ -54,7 +54,7 @@ function versionAssets(dir) {
 /** Avatares só para quem entrou: o navegador guarda, a CDN não. */
 const privateCache = (res) => res.setHeader('Cache-Control', 'private, max-age=604800');
 
-export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits } = {}) {
+export function createApp(store, { production = false, origin = '', uploads = process.env.UPLOAD_DIR || '.data/uploads', commits = recentCommits, push = null } = {}) {
   const uploadRoot = resolve(uploads);
   const presence = new Map();
   const app = express();
@@ -149,6 +149,11 @@ export function createApp(store, { production = false, origin = '', uploads = pr
     next();
   });
 
+  // Avisos fora do site (Web Push).
+  const needPush = () => { if (!push) throw new AppError(503, 'Avisos fora do site não estão ligados neste servidor.'); return push; };
+  app.get('/api/push/key', async (_req, res) => res.json({ publicKey: (await needPush().keys()).publicKey }));
+  app.post('/api/push/subscriptions', async (req, res) => { await needPush().subscribe(req.actor.id, req.body?.subscription); res.status(201).json({ ok: true }); });
+  app.delete('/api/push/subscriptions', async (req, res) => { await needPush().unsubscribe(req.actor.id, req.body?.endpoint); res.json({ ok: true }); });
   app.post('/api/team/images', express.raw({ type: Object.keys(IMAGE_TYPES), limit: MAX_IMAGE }), async (req, res) => {
     const type = IMAGE_TYPES[req.get('content-type')];
     if (!type || !Buffer.isBuffer(req.body) || !type.magic(req.body)) throw new AppError(400, 'Envie uma imagem PNG, JPG, WebP ou GIF válida.');

@@ -347,7 +347,10 @@ export function createStore({ query }) {
       updated.history.push(event(actor, actions.join(', ')));
       const result = await query('UPDATE cards SET document = ?, version = ? WHERE id = ? AND version = ?',
         [JSON.stringify(updated), version + 1, id, version]);
-      if (result.affectedRows === 1) return { ...updated, version: version + 1 };
+      if (result.affectedRows === 1) {
+        if (comment) emit({ type: 'comment', card: updated, comment, actor });
+        return { ...updated, version: version + 1 };
+      }
     }
     throw new AppError(409, 'O cartão mudou. Atualize o quadro e tente novamente.');
   }
@@ -626,6 +629,12 @@ export function createStore({ query }) {
     return { ...JSON.parse(row.data), memberId: row.member_id };
   }
   const chatRow = row => ({ ...JSON.parse(row.data), sequence: Number(row.sequence) });
+  const eventListeners = new Set();
+  /** Avisos de fora (push): quem ouve recebe mensagens do chat e comentários de cartão. Falha aqui nunca quebra a gravação. */
+  function onEvent(listener) { eventListeners.add(listener); return () => eventListeners.delete(listener); }
+  function emit(event) {
+    for (const listener of eventListeners) Promise.resolve().then(() => listener(event)).catch((error) => console.error('Aviso:', error.message));
+  }
   const chatListeners = new Set();
   function subscribeTeamMessages(listener) {
     chatListeners.add(listener);
@@ -679,6 +688,7 @@ export function createStore({ query }) {
     }
     const saved = chatRow(await first('SELECT sequence, data FROM team_messages WHERE id = ?', [clientId]));
     for (const listener of chatListeners) listener();
+    emit({ type: 'team', message: saved });
     return saved;
   }
   async function reactTeamMessage(id, input, actor) {
@@ -712,5 +722,5 @@ export function createStore({ query }) {
     return writeContext(projectId, row, current, patch, actor, read, `Voltou para a versão ${version}`);
   }
 
-  return { reactTeamMessage, teamReactionRevision, teamReactions, saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
+  return { reactTeamMessage, teamReactionRevision, teamReactions, saveTeamImage, teamImage, ...createFinance({ query, project, members, event, AppError }), onEvent, subscribeTeamMessages, teamMessages, addTeamMessage, projectContext, setProjectContext, contextHistory, restoreContext, markContextRead, projectActivity, saveGithubEvent, githubEvents, projectMessages, addProjectMessage, latestMessages, preferences, setPreferences, createMember, login, changePin, issue, revoke, tokens, revokeMcp, identity, projects, members, createProject, createCard, getCard, listCards, cardVersions, boardCards, updateCard, addStep, updateStep, removeStep, addAttachment, removeAttachment, cardFile };
 }
