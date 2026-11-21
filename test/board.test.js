@@ -72,7 +72,7 @@ test('a conta do navegador e o MCP compartilham os cartões e preservam a autori
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', origin), {
     requestInit: { headers: { authorization: `Bearer ${credential.body.token}` } }
   }));
-  assert.equal((await client.listTools()).tools.length, 15);
+  assert.equal((await client.listTools()).tools.length, 18);
 
   async function call(name, args) {
     const result = await client.callTool({ name, arguments: args });
