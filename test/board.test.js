@@ -365,3 +365,17 @@ test('custo: ler o quadro não relê todos os cartões nem projetos e membros a 
   assert.equal((await store.projects()).length, 2);
   await database.close();
 });
+
+test('comentário com versão antiga entra (não apaga nada); campo com versão antiga é recusado', async () => {
+  const database = await openDatabase({ path: ':memory:' });
+  const store = createStore(database);
+  const member = await store.createMember({ name: 'João' });
+  const actor = { ...member, source: 'Web' };
+  const project = await store.createProject({ name: 'GAVYO Auto' });
+  const card = await store.createCard({ projectId: project.id, title: 'Um' }, actor);
+  await store.updateCard(card.id, { comment: 'Claude passou aqui' }, { ...member, source: 'Claude' }, card.version);
+  const commented = await store.updateCard(card.id, { comment: 'Eu também' }, actor, card.version);
+  assert.deepEqual(commented.comments.map((item) => item.text), ['Claude passou aqui', 'Eu também']);
+  await assert.rejects(store.updateCard(card.id, { title: 'Outro' }, actor, card.version), (error) => error.status === 409);
+  await database.close();
+});
